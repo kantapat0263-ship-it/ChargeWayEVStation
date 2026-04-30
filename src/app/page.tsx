@@ -131,7 +131,10 @@ function TripForm({
   const placesLib = useMapsLibrary('places');
 
   // EPA Usable range calculation
-  const usableRange = Math.round(fullRange * (1 - minBatteryThreshold / 100) * EPA_FACTOR);
+  // Step 1: Calculate Actual EPA Range (85% of Factory spec)
+  const actualEpaRange = fullRange * EPA_FACTOR;
+  // Step 2: Calculate Usable range before hitting threshold
+  const usableRange = Math.round(actualEpaRange * (1 - minBatteryThreshold / 100));
 
   useEffect(() => {
     const handleLocationUpdate = (e: any) => {
@@ -479,7 +482,8 @@ function MapView({
         setSelectedStation(null);
 
         // Calculate thresholds using EPA Adjustment (85%)
-        const usableRangeKm = fullRange * (1 - minBatteryThreshold / 100) * EPA_FACTOR;
+        const epaEstimatedRange = fullRange * EPA_FACTOR;
+        const usableRangeKm = epaEstimatedRange * (1 - minBatteryThreshold / 100);
 
         const stops: any[] = [];
         const activeNetworks = CHARGING_NETWORKS.filter(n => selectedNetworks.includes(n.id));
