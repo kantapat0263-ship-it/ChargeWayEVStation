@@ -61,7 +61,7 @@ export default function ChargeWayApp() {
                 </div>
               </div>
               <Badge variant="outline" className="rounded-full bg-secondary/5 text-secondary border-secondary/20 font-bold px-3">
-                v1.4.0
+                v1.4.1
               </Badge>
             </div>
           </header>
@@ -295,7 +295,7 @@ function TripForm({
             step={1}
             className="py-1 cursor-pointer"
           />
-          <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider text-right italic">ระบุว่าแบตเหลือกี่ % จึงจะเริ่มหาสถานีชาร์จ</p>
+          <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider text-right italic">เมื่อแบตเหลือถึงจุดนี้ จะค้นหาสถานีชาร์จในรัศมี 10 กม.</p>
         </div>
       </section>
 
@@ -447,7 +447,6 @@ function MapView({
         setSelectedStation(null);
 
         // Calculate distance until battery reaches threshold
-        // distance_to_threshold = ( (current - threshold) / 100 ) * total_range
         const batteryAvailableForTrip = Math.max(0, currentBattery - minBatteryThreshold);
         const distanceToChargePointKm = (batteryAvailableForTrip / 100) * ATTO3_RANGE_KM;
 
@@ -473,8 +472,8 @@ function MapView({
             CHARGING_NETWORKS.find(n => n.id === id)?.query || ""
           ).filter(Boolean);
           
-          // Search in 30km radius around the predicted low battery point
-          searchStations(stopLocation, 30000, networkQueries);
+          // Search in 10km radius around the predicted low battery point as requested
+          searchStations(stopLocation, 10000, networkQueries);
           
           const bounds = new google.maps.LatLngBounds();
           bounds.extend(route.start_location);
@@ -533,7 +532,7 @@ function MapView({
           >
              <div className="bg-secondary text-white px-4 py-2 rounded-2xl shadow-2xl border-2 border-white flex flex-col items-center animate-bounce">
                 <Zap className="w-5 h-5 fill-white" />
-                <span className="text-[10px] font-black uppercase tracking-wider">ควรชาร์จแถวนี้</span>
+                <span className="text-[10px] font-black uppercase tracking-wider">รัศมีจุดชาร์จ 10 กม.</span>
              </div>
           </AdvancedMarker>
         ))}
@@ -609,8 +608,8 @@ function MapView({
                       <Zap className="w-5 h-5 text-white fill-white" />
                     </div>
                     <div>
-                      <p className="text-sm font-black text-secondary">จำเป็นต้องแวะชาร์จ</p>
-                      <p className="text-[11px] font-bold text-muted-foreground">เลือกสถานีชาร์จในโซนสีฟ้าบนแผนที่</p>
+                      <p className="text-sm font-black text-secondary">พบสถานีชาร์จในรัศมี 10 กม.</p>
+                      <p className="text-[11px] font-bold text-muted-foreground">เลือกเครือข่ายที่คุณชอบบนแผนที่</p>
                     </div>
                   </div>
                   
