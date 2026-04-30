@@ -404,38 +404,23 @@ function MapView({
     const service = new google.maps.places.PlacesService(map);
     const searchPromises = networksToSearch.map(network => {
       return new Promise<any[]>((resolve) => {
-        // Use a broad search with both type and keyword for Thailand data
+        // Broad search with keyword to ensure maximum coverage in Thailand
         service.nearbySearch({
           location,
           radius: 10000, // 10km radius
-          keyword: network.query,
-          type: 'car_charging_station'
+          keyword: network.query
         }, (results, status) => {
           if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-            // Flexible filtering: check if the brand name or match tag is in the result name
+            // Filter results to ensure brand matches name or vicinity
             const filtered = results.filter(place => {
               const name = place.name?.toLowerCase() || "";
+              const vicinity = place.vicinity?.toLowerCase() || "";
               const matchTag = network.brandMatch.toLowerCase();
-              return name.includes(matchTag);
+              return name.includes(matchTag) || vicinity.includes(matchTag);
             });
             resolve(filtered);
           } else {
-            // If nothing found with type, try without type restriction for better coverage
-            service.nearbySearch({
-              location,
-              radius: 10000,
-              keyword: network.query
-            }, (res, stat) => {
-              if (stat === google.maps.places.PlacesServiceStatus.OK && res) {
-                const filt = res.filter(p => {
-                   const n = p.name?.toLowerCase() || "";
-                   return n.includes(network.brandMatch.toLowerCase());
-                });
-                resolve(filt);
-              } else {
-                resolve([]);
-              }
-            });
+            resolve([]);
           }
         });
       });
@@ -444,7 +429,7 @@ function MapView({
     const resultsArray = await Promise.all(searchPromises);
     const flatResults = resultsArray.flat();
     
-    // De-duplicate by place_id using window.Map to avoid conflict with Component Map
+    // De-duplicate by place_id using window.Map
     const uniqueMap = new window.Map();
     flatResults.forEach(res => {
       if (res.place_id) uniqueMap.set(res.place_id, res);
