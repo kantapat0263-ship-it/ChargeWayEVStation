@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -34,7 +33,8 @@ import {
   Crosshair,
   Target,
   AlertCircle,
-  Star
+  Star,
+  ArrowRight
 } from 'lucide-react';
 import { CHARGING_NETWORKS } from '@/lib/constants';
 import { cn } from '@/lib/utils';
@@ -62,7 +62,7 @@ export default function ChargeWayApp() {
                 </div>
               </div>
               <Badge variant="outline" className="rounded-full bg-secondary/5 text-secondary border-secondary/20 font-bold px-3">
-                Multi-Stop v3.2
+                Multi-Stop v3.3
               </Badge>
             </div>
           </header>
@@ -124,6 +124,9 @@ function TripForm({
   const originInputRef = useRef<HTMLInputElement>(null);
   const destinationInputRef = useRef<HTMLInputElement>(null);
   const placesLib = useMapsLibrary('places');
+
+  // Calculate usable range
+  const usableRange = Math.round(fullRange * (1 - minBatteryThreshold / 100));
 
   useEffect(() => {
     const handleLocationUpdate = (e: any) => {
@@ -283,6 +286,20 @@ function TripForm({
             step={1}
             className="py-1 cursor-pointer"
           />
+          
+          {/* New Display: Distance that can be traveled */}
+          <div className="pt-2 border-t border-border/40 mt-4 flex items-center justify-between">
+             <div className="flex items-center gap-2">
+                <div className="bg-green-500/10 p-1 rounded-md">
+                   <Route className="w-3.5 h-3.5 text-green-600" />
+                </div>
+                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">ระยะทางที่วิ่งได้จริง</span>
+             </div>
+             <div className="flex items-center gap-1.5">
+                <span className="text-sm font-black text-green-600 tabular-nums">{usableRange} กม.</span>
+                <span className="text-[10px] font-bold text-muted-foreground italic">/ ชาร์จ</span>
+             </div>
+          </div>
           <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider text-right italic">ระบบจะค้นหาสถานีชาร์จทุกจุดที่แบตลดถึงระดับนี้</p>
         </div>
       </section>
@@ -437,7 +454,6 @@ function MapView({
         setSelectedStation(null);
 
         // Distance thresholds
-        // Assuming trip starts with 100% battery based on user request to remove current battery input
         const thresholdKm = (minBatteryThreshold / 100) * fullRange;
         const usableFullKm = Math.max(0, fullRange - thresholdKm);
 
