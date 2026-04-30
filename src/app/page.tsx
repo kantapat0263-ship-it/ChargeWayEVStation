@@ -35,16 +35,11 @@ import {
 import { CHARGING_NETWORKS, ATTO3_RANGE_KM, SAFETY_MARGIN_PERCENT } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
-// It is recommended to use environment variables for API keys
-// Create a .env.local file and add NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_api_key
-const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PII-0fyiz40tHHH8Hnk";
+// Google Maps API Key provided by user
+const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PIl-0fyiz40tHHH8Hnk";
 
 export default function ChargeWayApp() {
   const [tripData, setTripData] = useState<any>(null);
-
-  if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === "AIzaSyBkAJkrsoawc920PII-0fyiz40tHHH8Hnk") {
-    console.warn("ChargeWay: Google Maps API Key is missing or using a placeholder. Please set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.");
-  }
 
   return (
     <APIProvider apiKey={GOOGLE_MAPS_API_KEY}>
@@ -70,17 +65,6 @@ export default function ChargeWayApp() {
 
           <ScrollArea className="flex-1">
             <main className="p-6 space-y-8">
-              {!process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY && (
-                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex gap-3 items-start">
-                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <p className="text-xs font-bold text-amber-800">API Key Required</p>
-                    <p className="text-[10px] text-amber-700 leading-relaxed">
-                      Please set <code className="bg-amber-100 px-1 rounded">NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> in your environment settings to enable all features.
-                    </p>
-                  </div>
-                </div>
-              )}
               <TripForm onPlanTrip={setTripData} />
               {tripData && <RouteSummary tripData={tripData} />}
             </main>
