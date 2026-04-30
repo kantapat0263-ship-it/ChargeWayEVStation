@@ -1,6 +1,7 @@
+
 "use client";
 
-import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { 
   APIProvider, 
   Map, 
@@ -27,12 +28,12 @@ import {
   ChevronRight,
   Info,
   Car,
-  Settings,
   LocateFixed,
   Map as MapIcon,
   Search,
   Crosshair,
-  Target
+  Target,
+  AlertCircle
 } from 'lucide-react';
 import { CHARGING_NETWORKS } from '@/lib/constants';
 import { cn } from '@/lib/utils';
@@ -60,7 +61,7 @@ export default function ChargeWayApp() {
                 </div>
               </div>
               <Badge variant="outline" className="rounded-full bg-secondary/5 text-secondary border-secondary/20 font-bold px-3">
-                Generic EV v2.0
+                Multi-Stop v3.0
               </Badge>
             </div>
           </header>
@@ -115,8 +116,9 @@ function TripForm({
 }) {
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
-  const [currentRange, setCurrentRange] = useState(400);
-  const [minRangeThreshold, setMinRangeThreshold] = useState(50);
+  const [fullRange, setFullRange] = useState(400);
+  const [currentBattery, setCurrentBattery] = useState(80);
+  const [minBatteryThreshold, setMinBatteryThreshold] = useState(20);
   const [selectedNetworks, setSelectedNetworks] = useState<string[]>([]);
   
   const originInputRef = useRef<HTMLInputElement>(null);
@@ -165,8 +167,9 @@ function TripForm({
     onPlanTrip({ 
       origin, 
       destination, 
-      currentRange, 
-      minRangeThreshold, 
+      fullRange,
+      currentBattery, 
+      minBatteryThreshold, 
       selectedNetworks 
     });
   };
@@ -188,7 +191,7 @@ function TripForm({
               </div>
               <Input 
                 ref={originInputRef}
-                placeholder="จุดเริ่มต้น (Origin)" 
+                placeholder="จุดเริ่มต้น" 
                 value={origin} 
                 onChange={e => setOrigin(e.target.value)}
                 className="pl-11 h-13 rounded-2xl border-border/80 focus:ring-primary/20 bg-background/50 text-sm font-medium transition-all"
@@ -202,7 +205,7 @@ function TripForm({
                 isPickingOnMap === 'origin' && "animate-pulse"
               )}
               onClick={() => setIsPickingOnMap(isPickingOnMap === 'origin' ? null : 'origin')}
-              title="เลือกจุดเริ่มบนแผนที่"
+              title="เลือกบนแผนที่"
             >
               <Crosshair className="w-5 h-5" />
             </Button>
@@ -215,7 +218,7 @@ function TripForm({
               </div>
               <Input 
                 ref={destinationInputRef}
-                placeholder="จุดหมายปลายทาง (Destination)" 
+                placeholder="ปลายทาง" 
                 value={destination} 
                 onChange={e => setDestination(e.target.value)}
                 className="pl-11 h-13 rounded-2xl border-border/80 focus:ring-secondary/20 bg-background/50 text-sm font-medium transition-all"
@@ -229,7 +232,7 @@ function TripForm({
                 isPickingOnMap === 'destination' && "animate-pulse"
               )}
               onClick={() => setIsPickingOnMap(isPickingOnMap === 'destination' ? null : 'destination')}
-              title="เลือกปลายทางบนแผนที่"
+              title="เลือกบนแผนที่"
             >
               <Crosshair className="w-5 h-5" />
             </Button>
@@ -237,11 +240,11 @@ function TripForm({
         </div>
       </section>
 
-      {/* Range Config */}
+      {/* Vehicle Config */}
       <section className="space-y-6">
         <div className="flex items-center gap-2 mb-2">
           <div className="w-1.5 h-4 bg-primary rounded-full" />
-          <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">การตั้งค่าระยะทาง</h2>
+          <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">การตั้งค่าพลังงาน</h2>
         </div>
 
         <div className="space-y-5 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
@@ -250,21 +253,36 @@ function TripForm({
               <div className="p-1.5 bg-primary/10 rounded-lg text-primary">
                 <Car className="w-4 h-4" />
               </div> 
-              ระยะทางที่วิ่งได้ขณะนี้
+              ระยะทางวิ่งสูงสุด (แบต 100%)
             </Label>
-            <span className="text-sm font-black text-primary bg-primary/10 px-3 py-1 rounded-xl tabular-nums">{currentRange} กม.</span>
+            <span className="text-sm font-black text-primary bg-primary/10 px-3 py-1 rounded-xl tabular-nums">{fullRange} กม.</span>
           </div>
           <Slider 
-            value={[currentRange]} 
-            onValueChange={v => setCurrentRange(v[0])} 
+            value={[fullRange]} 
+            onValueChange={v => setFullRange(v[0])} 
             max={1000} 
-            step={5}
+            step={10}
             className="py-1 cursor-pointer"
           />
-          <div className="flex items-center justify-between text-[11px] font-bold text-muted-foreground/70">
-            <p>0 กม.</p>
-            <p>1,000 กม.</p>
+        </div>
+
+        <div className="space-y-5 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
+          <div className="flex justify-between items-center">
+            <Label className="flex items-center gap-2.5 text-sm font-bold text-foreground/80">
+              <div className="p-1.5 bg-green-100 rounded-lg text-green-600">
+                <Battery className="w-4 h-4" />
+              </div> 
+              แบตเตอรี่ปัจจุบัน
+            </Label>
+            <span className="text-sm font-black text-green-600 bg-green-50 px-3 py-1 rounded-xl tabular-nums">{currentBattery}%</span>
           </div>
+          <Slider 
+            value={[currentBattery]} 
+            onValueChange={v => setCurrentBattery(v[0])} 
+            max={100} 
+            step={1}
+            className="py-1 cursor-pointer"
+          />
         </div>
 
         <div className="space-y-5 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
@@ -273,19 +291,19 @@ function TripForm({
               <div className="p-1.5 bg-secondary/10 rounded-lg text-secondary">
                 <Zap className="w-4 h-4" />
               </div> 
-              เหลือระยะกี่ กม. ถึงเริ่มชาร์จ
+              ต้องชาร์จเมื่อแบตเหลือ
             </Label>
-            <span className="text-sm font-black text-secondary bg-secondary/10 px-3 py-1 rounded-xl tabular-nums">{minRangeThreshold} กม.</span>
+            <span className="text-sm font-black text-secondary bg-secondary/10 px-3 py-1 rounded-xl tabular-nums">{minBatteryThreshold}%</span>
           </div>
           <Slider 
-            value={[minRangeThreshold]} 
-            onValueChange={v => setMinRangeThreshold(v[0])} 
-            max={200} 
-            min={10}
-            step={5}
+            value={[minBatteryThreshold]} 
+            onValueChange={v => setMinBatteryThreshold(v[0])} 
+            max={50} 
+            min={5}
+            step={1}
             className="py-1 cursor-pointer"
           />
-          <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider text-right italic">เมื่อระยะเหลือถึงจุดนี้ จะค้นหาสถานีชาร์จในรัศมี 10 กม.</p>
+          <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider text-right italic">ระบบจะค้นหาสถานีชาร์จทุกจุดที่แบตลดถึงระดับนี้</p>
         </div>
       </section>
 
@@ -385,16 +403,17 @@ function MapView({
     });
   }, [isPickingOnMap, geocodingLib, setIsPickingOnMap]);
 
-  const searchStations = useCallback((location: google.maps.LatLng, radius: number, networkQueries: string[]) => {
+  const searchStations = useCallback((location: google.maps.LatLng, networkQueries: string[]) => {
     if (!placesLib || !map) return;
     const service = new google.maps.places.PlacesService(map);
     
-    const queries = networkQueries.length > 0 ? networkQueries : ['EV Charging Station Thailand'];
+    // Always include a general query for EV stations
+    const queries = networkQueries.length > 0 ? networkQueries : ['EV Charging Station'];
 
     queries.forEach(query => {
       service.nearbySearch({
         location,
-        radius,
+        radius: 10000, // 10km radius as requested
         keyword: query
       }, (results, status) => {
         if (status === google.maps.places.PlacesServiceStatus.OK && results) {
@@ -413,7 +432,7 @@ function MapView({
     
     const calculateRoute = async () => {
       setIsLoading(true);
-      const { origin, destination, currentRange, minRangeThreshold, selectedNetworks } = tripData;
+      const { origin, destination, fullRange, currentBattery, minBatteryThreshold, selectedNetworks } = tripData;
       const directionsService = new google.maps.DirectionsService();
       
       try {
@@ -425,51 +444,64 @@ function MapView({
 
         directionsRenderer.setDirections(result);
         const route = result.routes[0].legs[0];
-        const distanceKm = (route.distance?.value || 0) / 1000;
+        const totalDistanceKm = (route.distance?.value || 0) / 1000;
+        
         setRouteInfo({
           distance: route.distance?.text || '0 km',
           duration: route.duration?.text || '0 mins',
-          distanceKm
+          distanceKm: totalDistanceKm
         });
 
         setStations([]);
         setPlannedStops([]);
         setSelectedStation(null);
 
-        // Distance you can drive until you reach the threshold
-        const distanceToChargePointKm = Math.max(0, currentRange - minRangeThreshold);
+        // Distance thresholds
+        const initialRangeKm = (currentBattery / 100) * fullRange;
+        const thresholdKm = (minBatteryThreshold / 100) * fullRange;
+        const usableInitialKm = Math.max(0, initialRangeKm - thresholdKm);
+        const usableFullKm = Math.max(0, fullRange - thresholdKm);
 
-        if (distanceKm > distanceToChargePointKm) {
-          let cumulativeDistance = 0;
-          let stopLocation = route.end_location;
+        const stops: any[] = [];
+        const networkQueries = selectedNetworks.map((id: string) => 
+          CHARGING_NETWORKS.find(n => n.id === id)?.query || ""
+        ).filter(Boolean);
 
-          // Find the point on the path where we reach the threshold
-          for (const step of route.steps) {
-            cumulativeDistance += (step.distance?.value || 0) / 1000;
-            if (cumulativeDistance >= distanceToChargePointKm) {
-              stopLocation = step.end_location;
-              break;
+        let cumulativeDist = 0;
+        let nextTargetDist = usableInitialKm;
+
+        // If total distance is more than what we have now
+        if (totalDistanceKm > usableInitialKm) {
+          route.steps.forEach(step => {
+            const stepDist = (step.distance?.value || 0) / 1000;
+            const newCumulativeDist = cumulativeDist + stepDist;
+
+            if (newCumulativeDist >= nextTargetDist) {
+              const stopLoc = step.end_location;
+              stops.push({
+                location: stopLoc,
+                title: `จุดชาร์จที่ ${stops.length + 1}`
+              });
+              
+              // Trigger search for stations around this stop
+              searchStations(stopLoc, networkQueries);
+              
+              // Plan next stop after full charge (minus threshold)
+              nextTargetDist += usableFullKm;
             }
-          }
-
-          setPlannedStops([{
-            location: stopLocation,
-            title: "จุดที่ควรแวะชาร์จ"
-          }]);
-
-          const networkQueries = selectedNetworks.map((id: string) => 
-            CHARGING_NETWORKS.find(n => n.id === id)?.query || ""
-          ).filter(Boolean);
-          
-          // Search in 10km radius
-          searchStations(stopLocation, 10000, networkQueries);
-          
-          const bounds = new google.maps.LatLngBounds();
-          bounds.extend(route.start_location);
-          bounds.extend(route.end_location);
-          bounds.extend(stopLocation);
-          map?.fitBounds(bounds, { padding: 100 });
+            cumulativeDist = newCumulativeDist;
+          });
         }
+
+        setPlannedStops(stops);
+        
+        // Auto fit bounds
+        const bounds = new google.maps.LatLngBounds();
+        bounds.extend(route.start_location);
+        bounds.extend(route.end_location);
+        stops.forEach(s => bounds.extend(s.location));
+        map?.fitBounds(bounds, { padding: 100 });
+
       } catch (err) {
         console.error("Route planning failed", err);
       } finally {
@@ -491,13 +523,16 @@ function MapView({
     
     let url = `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destinationStr}`;
     
+    // Add waypoints (charging stops)
+    const waypoints = [];
     if (selectedStation) {
-      const lat = selectedStation.geometry.location.lat();
-      const lng = selectedStation.geometry.location.lng();
-      url += `&waypoints=${lat},${lng}`;
-    } else if (plannedStops.length > 0) {
-      const waypoints = plannedStops.map(s => `${s.location.lat()},${s.location.lng()}`).join('|');
-      url += `&waypoints=${encodeURIComponent(waypoints)}`;
+      waypoints.push(`${selectedStation.geometry.location.lat()},${selectedStation.geometry.location.lng()}`);
+    } else {
+      plannedStops.forEach(s => waypoints.push(`${s.location.lat()},${s.location.lng()}`));
+    }
+
+    if (waypoints.length > 0) {
+      url += `&waypoints=${encodeURIComponent(waypoints.join('|'))}`;
     }
 
     window.open(url, '_blank');
@@ -506,7 +541,7 @@ function MapView({
   return (
     <>
       <Map
-        mapId="charge_way_v4"
+        mapId="charge_way_v5"
         defaultCenter={{ lat: 13.7367, lng: 100.5231 }}
         defaultZoom={12}
         gestureHandling={'greedy'}
@@ -519,9 +554,9 @@ function MapView({
             key={`stop-${i}`}
             position={stop.location}
           >
-             <div className="bg-secondary text-white px-4 py-2 rounded-2xl shadow-2xl border-2 border-white flex flex-col items-center animate-bounce">
-                <Zap className="w-5 h-5 fill-white" />
-                <span className="text-[10px] font-black uppercase tracking-wider">รัศมีจุดชาร์จ 10 กม.</span>
+             <div className="bg-secondary text-white px-3 py-1.5 rounded-2xl shadow-2xl border-2 border-white flex flex-col items-center animate-bounce z-10">
+                <Zap className="w-4 h-4 fill-white" />
+                <span className="text-[9px] font-black uppercase tracking-wider">ต้องชาร์จจุดที่ {i+1}</span>
              </div>
           </AdvancedMarker>
         ))}
@@ -539,7 +574,7 @@ function MapView({
               glyphColor={'#ffffff'}
               scale={selectedStation?.place_id === station.place_id ? 1.4 : 1.1}
             >
-              <Zap className="w-4 h-4 text-white" />
+              <Zap className="w-3.5 h-3.5 text-white" />
             </Pin>
           </AdvancedMarker>
         ))}
@@ -560,6 +595,13 @@ function MapView({
                   <Badge variant="outline" className="text-[9px] font-bold border-green-500 text-green-600 bg-green-50">เปิดอยู่</Badge>
                 )}
               </div>
+              <Button 
+                size="sm" 
+                className="w-full mt-3 h-8 text-[10px] font-bold rounded-xl"
+                onClick={() => setSelectedStation(selectedStation)}
+              >
+                เลือกสถานีนี้
+              </Button>
             </div>
           </InfoWindow>
         )}
@@ -574,18 +616,18 @@ function MapView({
                 <Route className="w-6 h-6 text-white" />
               </div>
               <div>
-                <CardTitle className="text-base font-black text-primary">วิเคราะห์เส้นทาง</CardTitle>
-                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">คำนวณตามระยะทางคงเหลือ</p>
+                <CardTitle className="text-base font-black text-primary">สรุปการเดินทาง</CardTitle>
+                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">วิเคราะห์ตามความจุแบตเตอรี่</p>
               </div>
             </CardHeader>
             <CardContent className="p-6 space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-muted/40 p-4 rounded-2xl border border-border/20 group hover:bg-muted/60 transition-colors">
-                  <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter mb-1">ระยะทางทั้งหมด</p>
+                  <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter mb-1">ระยะทางรวม</p>
                   <p className="text-xl font-black text-primary tabular-nums">{routeInfo.distance}</p>
                 </div>
                 <div className="bg-muted/40 p-4 rounded-2xl border border-border/20 group hover:bg-muted/60 transition-colors">
-                  <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter mb-1">เวลาโดยประมาณ</p>
+                  <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter mb-1">เวลาขับขี่</p>
                   <p className="text-xl font-black text-primary tabular-nums">{routeInfo.duration}</p>
                 </div>
               </div>
@@ -597,25 +639,25 @@ function MapView({
                       <Zap className="w-5 h-5 text-white fill-white" />
                     </div>
                     <div>
-                      <p className="text-sm font-black text-secondary">พบสถานีชาร์จในรัศมี 10 กม.</p>
-                      <p className="text-[11px] font-bold text-muted-foreground">เลือกเครือข่ายที่คุณชอบบนแผนที่</p>
+                      <p className="text-sm font-black text-secondary">ต้องแวะชาร์จ {plannedStops.length} ครั้ง</p>
+                      <p className="text-[11px] font-bold text-muted-foreground">แสดงสถานีชาร์จรอบจุดแวะ 10 กม.</p>
                     </div>
                   </div>
                   
                   {selectedStation ? (
                     <div className="pt-3 border-t border-secondary/20 animate-in fade-in zoom-in-95">
                       <div className="flex items-start justify-between">
-                        <div>
-                          <p className="text-[12px] font-black text-primary truncate max-w-[200px]">{selectedStation.name}</p>
-                          <p className="text-[10px] font-medium text-muted-foreground truncate max-w-[220px]">{selectedStation.vicinity}</p>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[12px] font-black text-primary truncate">{selectedStation.name}</p>
+                          <p className="text-[10px] font-medium text-muted-foreground truncate">{selectedStation.vicinity}</p>
                         </div>
-                        <Badge className="bg-primary text-white text-[9px]">เลือกแล้ว</Badge>
+                        <Badge className="bg-primary text-white text-[9px] shrink-0 ml-2">เลือกแล้ว</Badge>
                       </div>
                     </div>
                   ) : (
                     <div className="flex items-center justify-center p-3 rounded-xl bg-white/50 border border-secondary/20 animate-pulse-soft">
-                      <Search className="w-3.5 h-3.5 text-secondary mr-2" />
-                      <p className="text-[10px] font-black text-secondary uppercase tracking-widest">รอการเลือกสถานี...</p>
+                      <AlertCircle className="w-3.5 h-3.5 text-secondary mr-2" />
+                      <p className="text-[10px] font-black text-secondary uppercase tracking-widest">กรุณาเลือกสถานีบนแผนที่</p>
                     </div>
                   )}
                 </div>
@@ -625,53 +667,31 @@ function MapView({
                     <Car className="w-5 h-5 text-white" />
                   </div>
                   <div>
-                    <p className="text-sm font-black text-green-600">เดินทางได้ตลอดเส้นทาง</p>
-                    <p className="text-[11px] font-bold text-green-700/60">พลังงานเพียงพอ ไม่ต้องแวะชาร์จ</p>
+                    <p className="text-sm font-black text-green-600">เดินทางได้รวดเดียว</p>
+                    <p className="text-[11px] font-bold text-green-700/60">พลังงานเพียงพอจนถึงที่หมาย</p>
                   </div>
                 </div>
               )}
 
               <Button 
                 onClick={openInGoogleMaps}
-                disabled={plannedStops.length > 0 && !selectedStation}
+                disabled={plannedStops.length > 0 && !selectedStation && stations.length > 0}
                 className="w-full bg-secondary hover:bg-secondary/90 text-white rounded-2xl h-14 font-black shadow-[0_10px_30px_rgba(31,140,140,0.3)] transition-all flex items-center justify-center gap-3 group relative overflow-hidden"
               >
-                <div className="absolute inset-0 bg-white/10 translate-y-full group-hover:translate-y-0 transition-transform" />
-                <MapIcon className="w-5 h-5 relative z-10" />
-                <span className="relative z-10">เริ่มนำทาง (Google Maps)</span>
-                <ChevronRight className="w-4.5 h-4.5 transition-transform group-hover:translate-x-1 relative z-10" />
+                <MapIcon className="w-5 h-5" />
+                <span>นำทางผ่าน Google Maps</span>
+                <ChevronRight className="w-4.5 h-4.5 group-hover:translate-x-1 transition-transform" />
               </Button>
-              
-              {plannedStops.length > 0 && !selectedStation && (
-                <p className="text-[10px] text-center text-secondary font-black animate-pulse-soft flex items-center justify-center gap-1.5 uppercase tracking-wider">
-                  <Info className="w-3 h-3" /> กรุณาเลือกสถานีชาร์จบนแผนที่เพื่อไปต่อ
-                </p>
-              )}
             </CardContent>
           </Card>
         </div>
       )}
 
-      {/* Map Control Shortcuts */}
-      <div className="absolute bottom-10 right-6 flex flex-col gap-3">
-         <button 
-           onClick={() => {
-             if (map && directionsRenderer?.getDirections()) {
-               const bounds = directionsRenderer.getDirections()?.routes[0].bounds;
-               if (bounds) map.fitBounds(bounds, { padding: 50 });
-             }
-           }}
-           className="bg-primary p-4 rounded-3xl shadow-2xl border border-white hover:bg-primary/90 transition-all hover:scale-110 active:scale-95 group"
-          >
-            <MapPin className="w-6 h-6 text-white" />
-         </button>
-      </div>
-
       {isLoading && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/20 backdrop-blur-sm">
            <div className="flex flex-col items-center gap-4 bg-white p-8 rounded-[2.5rem] shadow-2xl border border-primary/10">
               <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-              <p className="text-sm font-black text-primary uppercase tracking-[0.2em]">กำลังคำนวณจุดชาร์จ...</p>
+              <p className="text-sm font-black text-primary uppercase tracking-[0.2em]">กำลังวิเคราะห์สถานีชาร์จ...</p>
            </div>
         </div>
       )}
