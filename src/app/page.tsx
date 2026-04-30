@@ -404,10 +404,10 @@ function MapView({
     const service = new google.maps.places.PlacesService(map);
     const searchPromises = networksToSearch.map(network => {
       return new Promise<any[]>((resolve) => {
-        // Broad search with keyword to ensure maximum coverage in Thailand
+        // Broad search with keyword in 20km radius
         service.nearbySearch({
           location,
-          radius: 10000, // 10km radius
+          radius: 20000, // 20km radius
           keyword: network.query
         }, (results, status) => {
           if (status === google.maps.places.PlacesServiceStatus.OK && results) {
@@ -493,7 +493,7 @@ function MapView({
                 atKm: Math.round(cumulativeDist)
               });
               
-              // Search stations for this specific stop (10km radius)
+              // Search stations for this specific stop (20km radius)
               const foundStations = await searchStationsAtLocation(stopLoc, activeNetworks);
               allFoundStations.push(...foundStations);
               
@@ -660,7 +660,7 @@ function MapView({
                       </div>
                       <div>
                         <p className="text-sm font-black text-secondary">ต้องแวะชาร์จ {plannedStops.length} ครั้ง</p>
-                        <p className="text-[11px] font-bold text-muted-foreground">รัศมี 10 กม. รอบทุกจุดที่แบตเริ่มต่ำ</p>
+                        <p className="text-[11px] font-bold text-muted-foreground">รัศมี 20 กม. รอบทุกจุดที่แบตเริ่มต่ำ</p>
                       </div>
                     </div>
                     
@@ -684,7 +684,7 @@ function MapView({
 
                   {stations.length > 0 && (
                     <div className="space-y-2">
-                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">เครือข่ายที่คุณชอบในรัศมี 10 กม. ({stations.length})</p>
+                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">เครือข่ายที่คุณชอบในรัศมี 20 กม. ({stations.length})</p>
                       <ScrollArea className="h-[200px] rounded-2xl border border-border/50 p-2">
                         <div className="space-y-2">
                           {stations.map((s, idx) => (
