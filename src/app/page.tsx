@@ -45,7 +45,7 @@ import { cn } from '@/lib/utils';
 
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PIl-0fyiz40tHHH8Hnk";
 
-// EPA Efficiency Factor (Typical real-world adjustment vs advertised WLTP/NEDC)
+// EPA Efficiency Factor
 const EPA_FACTOR = 0.85; 
 
 export default function ChargeWayApp() {
@@ -54,9 +54,9 @@ export default function ChargeWayApp() {
 
   return (
     <APIProvider apiKey={GOOGLE_MAPS_API_KEY} libraries={['places', 'geocoding', 'routes', 'geometry']}>
-      <div className="flex flex-col lg:flex-row h-screen w-full bg-background overflow-hidden font-body selection:bg-primary/20">
+      <div className="flex flex-col lg:flex-row min-h-screen lg:h-screen w-full bg-background overflow-x-hidden font-body selection:bg-primary/20">
         {/* Left Control Panel */}
-        <div className="w-full lg:w-[420px] h-full flex flex-col border-r border-border bg-card z-20 shadow-2xl overflow-hidden relative">
+        <div className="w-full lg:w-[420px] h-auto lg:h-full flex flex-col border-r border-border bg-card z-20 shadow-2xl relative lg:overflow-hidden">
           <header className="p-6 pb-4 border-b border-border/50 bg-white/50 backdrop-blur-sm sticky top-0 z-30">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-3">
@@ -74,24 +74,23 @@ export default function ChargeWayApp() {
             </div>
           </header>
 
-          <ScrollArea className="flex-1">
+          <ScrollArea className="flex-1 h-auto lg:h-full">
             <main className="p-6 space-y-8">
               <TripForm 
                 onPlanTrip={setTripData} 
                 isPickingOnMap={isPickingOnMap}
                 setIsPickingOnMap={setIsPickingOnMap}
               />
-              {tripData && <div id="summary-section" className="pt-4 border-t border-border/40" />}
             </main>
           </ScrollArea>
 
-          <footer className="p-4 border-t border-border/50 bg-muted/20 text-center">
+          <footer className="p-4 border-t border-border/50 bg-muted/20 text-center hidden lg:block">
             <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-widest">Powered by Google Places API • TH</p>
           </footer>
         </div>
 
-        {/* Right Map Panel */}
-        <div className="flex-1 relative h-[60vh] lg:h-full bg-slate-50">
+        {/* Right Map Panel & Summary */}
+        <div className="flex-1 relative flex flex-col h-auto lg:h-full bg-slate-50 overflow-y-auto lg:overflow-hidden">
           <MapView 
             tripData={tripData} 
             isPickingOnMap={isPickingOnMap} 
@@ -101,7 +100,7 @@ export default function ChargeWayApp() {
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 pointer-events-none">
               <div className="bg-primary/90 text-white px-6 py-3 rounded-full shadow-2xl backdrop-blur-md flex items-center gap-3 animate-pulse">
                 <Target className="w-5 h-5" />
-                <span className="text-sm font-black uppercase tracking-widest">
+                <span className="text-xs sm:text-sm font-black uppercase tracking-widest text-center">
                   คลิกที่แผนที่เพื่อเลือก {isPickingOnMap === 'origin' ? 'จุดเริ่มต้น' : 'ปลายทาง'}
                 </span>
               </div>
@@ -196,7 +195,14 @@ function TripForm({
           }
         });
       },
-      () => setIsLocating(false),
+      () => {
+        setIsLocating(false);
+        toast({
+          variant: "destructive",
+          title: "Location Permission Denied",
+          description: "ไม่สามารถเข้าถึงตำแหน่งของคุณได้ โปรดอนุญาตสิทธิ์การเข้าถึงตำแหน่ง"
+        });
+      },
       { enableHighAccuracy: true, timeout: 10000 }
     );
   };
@@ -350,7 +356,7 @@ function TripForm({
       <section className="space-y-4">
         <div className="flex items-center gap-2 mb-2">
           <div className="w-1.5 h-4 bg-primary rounded-full" />
-          <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">เครือข่ายที่ชอบ (Prefer Networks)</h2>
+          <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">เครือข่ายที่เลือก (Charging Networks)</h2>
         </div>
         <div className="flex flex-wrap gap-2.5">
           {CHARGING_NETWORKS.map(network => (
@@ -431,7 +437,6 @@ function MapView({
     });
   }, [isPickingOnMap, geocodingLib, setIsPickingOnMap]);
 
-  // Combined Searching & Filtering Logic
   const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng, networks: string[]) => {
     if (!placesLib || !map) return [];
     
@@ -448,13 +453,11 @@ function MapView({
     }
 
     const allResults: any[] = [];
-
-    // Perform multiple searches for better coverage (Concurrent)
     const searchPromises = searchKeywords.map(keyword => {
       return new Promise<any[]>((resolve) => {
         service.nearbySearch({
           location,
-          radius: 20000, // 20km radius as requested
+          radius: 20000, 
           keyword,
           type: 'car_charging_station'
         }, (results, status) => {
@@ -470,27 +473,12 @@ function MapView({
     const resultsArray = await Promise.all(searchPromises);
     resultsArray.forEach(res => allResults.push(...res));
 
-    // De-duplicate by place_id using window.Map
     const uniqueMap = new window.Map();
     allResults.forEach(res => {
       if (res.place_id) uniqueMap.set(res.place_id, res);
     });
 
-    const uniqueResults = Array.from(uniqueMap.values());
-
-    // Apply strict filtering only if networks are selected
-    if (networks.length > 0) {
-      return uniqueResults.filter(station => {
-        const name = (station.name || "").toUpperCase();
-        return networks.some(netId => {
-          const net = CHARGING_NETWORKS.find(n => n.id === netId);
-          if (!net) return false;
-          return net.brandMatch.some(match => name.includes(match.toUpperCase()));
-        });
-      });
-    }
-
-    return uniqueResults;
+    return Array.from(uniqueMap.values());
   }, [placesLib, map]);
 
   useEffect(() => {
@@ -521,34 +509,29 @@ function MapView({
         setPlannedStops([]);
         setSelectedStation(null);
 
-        // Segment-based EPA calculation logic
         const actualEpaRange = fullRange * EPA_FACTOR;
         const usableRangePerCharge = actualEpaRange * (1 - minBatteryThreshold / 100);
 
         const stops: any[] = [];
         const allFoundStations: any[] = [];
-        
         const path = result.routes[0].overview_path;
         let currentSegmentDist = 0;
         let cumulativeDist = 0;
 
-        // Path tracking for precision stops
         for (let i = 0; i < path.length - 1; i++) {
           const d = google.maps.geometry.spherical.computeDistanceBetween(path[i], path[i+1]) / 1000;
           currentSegmentDist += d;
           cumulativeDist += d;
 
-          // If current battery reach usable range limit, find station
           if (currentSegmentDist >= usableRangePerCharge) {
             const stopLoc = path[i+1];
             stops.push({ location: stopLoc, atKm: Math.round(cumulativeDist) });
             const found = await searchStationsAtLocation(stopLoc, selectedNetworks);
             allFoundStations.push(...found);
-            currentSegmentDist = 0; // Reset for next segment
+            currentSegmentDist = 0; 
           }
         }
 
-        // De-duplicate final aggregated results
         const finalUniqueMap = new window.Map();
         allFoundStations.forEach(res => {
           if (res.place_id) finalUniqueMap.set(res.place_id, res);
@@ -561,7 +544,6 @@ function MapView({
         bounds.extend(route.start_location);
         bounds.extend(route.end_location);
         stops.forEach(s => bounds.extend(s.location));
-        
         map?.fitBounds(bounds, { padding: 80 });
 
       } catch (err) {
@@ -594,66 +576,68 @@ function MapView({
 
   return (
     <>
-      <Map
-        mapId="charge_way_v5"
-        defaultCenter={{ lat: 13.7367, lng: 100.5231 }}
-        defaultZoom={12}
-        gestureHandling={'greedy'}
-        className="w-full h-full"
-        onClick={handleMapClick}
-      >
-        {plannedStops.map((stop, i) => (
-          <AdvancedMarker key={`stop-${i}`} position={stop.location}>
-             <div className="bg-secondary text-white px-3 py-1.5 rounded-2xl shadow-2xl border-2 border-white flex flex-col items-center animate-bounce z-10">
-                <Zap className="w-4 h-4 fill-white" />
-                <span className="text-[9px] font-black uppercase tracking-wider">จุดแวะที่ {i+1} ({stop.atKm} กม.)</span>
-             </div>
-          </AdvancedMarker>
-        ))}
+      <div className="w-full h-[50vh] lg:h-full relative shrink-0">
+        <Map
+          mapId="charge_way_v5"
+          defaultCenter={{ lat: 13.7367, lng: 100.5231 }}
+          defaultZoom={12}
+          gestureHandling={'greedy'}
+          className="w-full h-full"
+          onClick={handleMapClick}
+        >
+          {plannedStops.map((stop, i) => (
+            <AdvancedMarker key={`stop-${i}`} position={stop.location}>
+               <div className="bg-secondary text-white px-3 py-1.5 rounded-2xl shadow-2xl border-2 border-white flex flex-col items-center animate-bounce z-10">
+                  <Zap className="w-4 h-4 fill-white" />
+                  <span className="text-[9px] font-black uppercase tracking-wider">จุดแวะที่ {i+1} ({stop.atKm} กม.)</span>
+               </div>
+            </AdvancedMarker>
+          ))}
 
-        {stations.map((station, i) => (
-          <AdvancedMarker
-            key={station.place_id || i}
-            position={station.geometry.location}
-            title={station.name}
-            onClick={() => {
-              setSelectedStation(station);
-              map?.panTo(station.geometry.location);
-            }}
-          >
-            <Pin 
-              background={selectedStation?.place_id === station.place_id ? '#FF5722' : '#1F8C8C'} 
-              borderColor={'#ffffff'} 
-              glyphColor={'#ffffff'}
-              scale={selectedStation?.place_id === station.place_id ? 1.4 : 1.1}
+          {stations.map((station, i) => (
+            <AdvancedMarker
+              key={station.place_id || i}
+              position={station.geometry.location}
+              title={station.name}
+              onClick={() => {
+                setSelectedStation(station);
+                map?.panTo(station.geometry.location);
+              }}
             >
-              <Zap className="w-3.5 h-3.5 text-white" />
-            </Pin>
-          </AdvancedMarker>
-        ))}
-
-        {selectedStation && (
-          <InfoWindow
-            position={selectedStation.geometry.location}
-            onCloseClick={() => setSelectedStation(null)}
-          >
-            <div className="p-2 min-w-[200px]">
-              <h3 className="font-black text-sm text-primary mb-1">{selectedStation.name}</h3>
-              <p className="text-[11px] text-muted-foreground leading-snug mb-2">{selectedStation.vicinity}</p>
-              <Button 
-                size="sm" 
-                className="w-full mt-3 h-8 text-[10px] font-bold rounded-xl"
-                onClick={() => setSelectedStation(selectedStation)}
+              <Pin 
+                background={selectedStation?.place_id === station.place_id ? '#FF5722' : '#1F8C8C'} 
+                borderColor={'#ffffff'} 
+                glyphColor={'#ffffff'}
+                scale={selectedStation?.place_id === station.place_id ? 1.4 : 1.1}
               >
-                เลือกสถานีนี้
-              </Button>
-            </div>
-          </InfoWindow>
-        )}
-      </Map>
+                <Zap className="w-3.5 h-3.5 text-white" />
+              </Pin>
+            </AdvancedMarker>
+          ))}
+
+          {selectedStation && (
+            <InfoWindow
+              position={selectedStation.geometry.location}
+              onCloseClick={() => setSelectedStation(null)}
+            >
+              <div className="p-2 min-w-[200px]">
+                <h3 className="font-black text-sm text-primary mb-1">{selectedStation.name}</h3>
+                <p className="text-[11px] text-muted-foreground leading-snug mb-2">{selectedStation.vicinity}</p>
+                <Button 
+                  size="sm" 
+                  className="w-full mt-3 h-8 text-[10px] font-bold rounded-xl"
+                  onClick={() => setSelectedStation(selectedStation)}
+                >
+                  เลือกสถานีนี้
+                </Button>
+              </div>
+            </InfoWindow>
+          )}
+        </Map>
+      </div>
 
       {routeInfo && (
-        <div className="absolute top-6 right-6 z-20 flex flex-col gap-5 w-[340px] md:w-[380px] max-h-[90vh] overflow-y-auto no-scrollbar">
+        <div className="relative lg:absolute lg:top-6 lg:right-6 z-20 flex flex-col gap-5 w-full lg:w-[380px] p-4 lg:p-0">
           <Card className="border-none shadow-[0_20px_50px_rgba(0,0,0,0.15)] bg-white/95 backdrop-blur-xl rounded-[2rem] overflow-hidden">
             <CardHeader className="bg-primary/5 p-6 flex flex-row items-center gap-4 border-b border-primary/10">
               <div className="bg-primary p-3 rounded-2xl">
@@ -750,8 +734,8 @@ function MapView({
       )}
 
       {isLoading && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/20 backdrop-blur-sm">
-           <div className="flex flex-col items-center gap-4 bg-white p-8 rounded-[2.5rem] shadow-2xl border border-primary/10">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/40 backdrop-blur-md">
+           <div className="flex flex-col items-center gap-4 bg-white p-8 rounded-[2.5rem] shadow-2xl border border-primary/10 mx-4 text-center">
               <Loader2 className="w-12 h-12 text-primary animate-spin" />
               <p className="text-sm font-black text-primary uppercase tracking-[0.2em]">กำลังคำนวณระยะ EPA และจุดแวะชาร์จ...</p>
            </div>
