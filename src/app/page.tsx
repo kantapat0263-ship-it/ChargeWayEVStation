@@ -135,7 +135,6 @@ function TripForm({
   const geocodingLib = useMapsLibrary('geocoding');
   const { toast } = useToast();
 
-  // EPA Usable range calculation
   const actualEpaRange = Math.round(fullRange * EPA_FACTOR);
   const usableRange = Math.round(actualEpaRange * (1 - minBatteryThreshold / 100));
 
@@ -194,30 +193,10 @@ function TripForm({
           setIsLocating(false);
           if (status === 'OK' && results && results[0]) {
             setOrigin(results[0].formatted_address);
-            toast({
-              title: "ดึงตำแหน่งสำเร็จ",
-              description: `ระบุตำแหน่งปัจจุบันเป็นจุดเริ่มต้นเรียบร้อยแล้ว`
-            });
-          } else {
-            toast({
-              variant: "destructive",
-              title: "Geocoding Failed",
-              description: "ไม่สามารถแปลงพิกัดเป็นที่อยู่ได้"
-            });
           }
         });
       },
-      (error) => {
-        setIsLocating(false);
-        let msg = "ไม่สามารถเข้าถึงตำแหน่งของคุณได้";
-        if (error.code === error.PERMISSION_DENIED) msg = "กรุณาอนุญาตการเข้าถึงตำแหน่ง (Location Permission) ในเบราว์เซอร์";
-        
-        toast({
-          variant: "destructive",
-          title: "Location Access Denied",
-          description: msg
-        });
-      },
+      () => setIsLocating(false),
       { enableHighAccuracy: true, timeout: 10000 }
     );
   };
@@ -266,24 +245,16 @@ function TripForm({
                 variant="outline"
                 size="icon"
                 disabled={isLocating}
-                className={cn(
-                  "h-13 w-13 rounded-2xl transition-all border-border/80",
-                  isLocating && "animate-pulse"
-                )}
+                className={cn("h-13 w-13 rounded-2xl", isLocating && "animate-pulse")}
                 onClick={handleUseMyLocation}
-                title="ใช้ตำแหน่งปัจจุบัน"
               >
                 {isLocating ? <Loader2 className="w-5 h-5 animate-spin" /> : <LocateFixed className="w-5 h-5 text-primary" />}
               </Button>
               <Button
                 variant={isPickingOnMap === 'origin' ? 'default' : 'outline'}
                 size="icon"
-                className={cn(
-                  "h-13 w-13 rounded-2xl transition-all border-border/80",
-                  isPickingOnMap === 'origin' && "animate-pulse"
-                )}
+                className="h-13 w-13 rounded-2xl"
                 onClick={() => setIsPickingOnMap(isPickingOnMap === 'origin' ? null : 'origin')}
-                title="เลือกบนแผนที่"
               >
                 <Crosshair className="w-5 h-5" />
               </Button>
@@ -306,12 +277,8 @@ function TripForm({
             <Button
               variant={isPickingOnMap === 'destination' ? 'default' : 'outline'}
               size="icon"
-              className={cn(
-                "h-13 w-13 rounded-2xl shrink-0 transition-all border-border/80",
-                isPickingOnMap === 'destination' && "animate-pulse"
-              )}
+              className="h-13 w-13 rounded-2xl shrink-0"
               onClick={() => setIsPickingOnMap(isPickingOnMap === 'destination' ? null : 'destination')}
-              title="เลือกบนแผนที่"
             >
               <Crosshair className="w-5 h-5" />
             </Button>
@@ -377,7 +344,6 @@ function TripForm({
                 <span className="text-[10px] font-bold text-muted-foreground italic">/ ชาร์จ</span>
              </div>
           </div>
-          <p className="text-[10px] text-muted-foreground italic text-right opacity-70">* คำนวณที่ {EPA_FACTOR * 100}% ของสเปคโรงงานเพื่อให้สอดคล้องกับการขับขี่จริง</p>
         </div>
       </section>
 
@@ -406,7 +372,7 @@ function TripForm({
 
       <Button 
         onClick={handlePlanTrip}
-        className="w-full h-15 rounded-[1.25rem] text-base font-black transition-all hover:shadow-[0_10px_30px_rgba(64,128,191,0.4)] hover:-translate-y-1 active:translate-y-0 bg-primary hover:bg-primary/90 text-white flex gap-3 items-center group shadow-lg"
+        className="w-full h-15 rounded-[1.25rem] text-base font-black transition-all bg-primary hover:bg-primary/90 text-white flex gap-3 items-center group shadow-lg"
       >
         <LocateFixed className="w-5.5 h-5.5 transition-transform group-hover:rotate-12" /> 
         คำนวณเส้นทางและจุดชาร์จ
@@ -454,21 +420,34 @@ function MapView({
   const handleMapClick = useCallback((e: MapMouseEvent) => {
     if (!isPickingOnMap || !e.detail.latLng || !geocodingLib) return;
 
-    const latLng = e.detail.latLng;
     const geocoder = new geocodingLib.Geocoder();
-
-    geocoder.geocode({ location: latLng }, (results, status) => {
+    geocoder.geocode({ location: e.detail.latLng }, (results, status) => {
       if (status === 'OK' && results && results[0]) {
-        const address = results[0].formatted_address;
         window.dispatchEvent(new CustomEvent('google-map-picker-update', {
-          detail: { type: isPickingOnMap, address }
+          detail: { type: isPickingOnMap, address: results[0].formatted_address }
         }));
         setIsPickingOnMap(null);
       }
     });
   }, [isPickingOnMap, geocodingLib, setIsPickingOnMap]);
 
-  const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng) => {
+  // Unified Filtering Logic
+  const filterStations = useCallback((rawStations: any[], networks: string[]) => {
+    if (networks.length === 0) return rawStations;
+    
+    return rawStations.filter(station => {
+      const name = (station.name || "").toUpperCase();
+      return networks.some(netId => {
+        if (netId === 'ptt') return name.includes("PTT") || name.includes("ปตท");
+        if (netId === 'pea') return name.includes("PEA") || name.includes("VOLTA") || name.includes("โวลต้า");
+        if (netId === 'elexa') return name.includes("ELEXA");
+        if (netId === 'spark') return name.includes("SPARK");
+        return false;
+      });
+    });
+  }, []);
+
+  const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng, networks: string[]) => {
     if (!placesLib || !map) return [];
     
     const service = new google.maps.places.PlacesService(map);
@@ -481,20 +460,21 @@ function MapView({
       }, (results, status) => {
         if (status === google.maps.places.PlacesServiceStatus.OK && results) {
           // Limit to maxResultCount = 10 as requested
-          resolve(results.slice(0, 10));
+          const filtered = filterStations(results.slice(0, 10), networks);
+          resolve(filtered);
         } else {
           resolve([]);
         }
       });
     });
-  }, [placesLib, map]);
+  }, [placesLib, map, filterStations]);
 
   useEffect(() => {
     if (!tripData || !routesLib || !directionsRenderer || !map) return;
     
     const calculateRoute = async () => {
       setIsLoading(true);
-      const { origin, destination, fullRange, minBatteryThreshold } = tripData;
+      const { origin, destination, fullRange, minBatteryThreshold, selectedNetworks } = tripData;
       const directionsService = new google.maps.DirectionsService();
       
       try {
@@ -506,68 +486,55 @@ function MapView({
 
         directionsRenderer.setDirections(result);
         const route = result.routes[0].legs[0];
-        const totalDistanceKm = (route.distance?.value || 0) / 1000;
         
         setRouteInfo({
           distance: route.distance?.text || '0 km',
           duration: route.duration?.text || '0 mins',
-          distanceKm: totalDistanceKm
+          distanceKm: (route.distance?.value || 0) / 1000
         });
 
         setStations([]);
         setPlannedStops([]);
         setSelectedStation(null);
 
-        // EPA Calculation: (Full Range * 0.85) * (1 - Threshold/100)
+        // EPA Segment-based calculation
         const actualEpaRange = fullRange * EPA_FACTOR;
         const usableRangePerCharge = actualEpaRange * (1 - minBatteryThreshold / 100);
 
         const stops: any[] = [];
         const allFoundStations: any[] = [];
         
-        // Accurate path tracking using overview_path
         const path = result.routes[0].overview_path;
         let currentSegmentDist = 0;
         let cumulativeDist = 0;
 
         for (let i = 0; i < path.length - 1; i++) {
-          const p1 = path[i];
-          const p2 = path[i+1];
-          const d = google.maps.geometry.spherical.computeDistanceBetween(p1, p2) / 1000;
-          
+          const d = google.maps.geometry.spherical.computeDistanceBetween(path[i], path[i+1]) / 1000;
           currentSegmentDist += d;
           cumulativeDist += d;
 
-          // If current segment exceeds usable range, plan a stop
           if (currentSegmentDist >= usableRangePerCharge) {
-            const stopLoc = p2;
-            stops.push({
-              location: stopLoc,
-              atKm: Math.round(cumulativeDist)
-            });
-            
-            const found = await searchStationsAtLocation(stopLoc);
+            const stopLoc = path[i+1];
+            stops.push({ location: stopLoc, atKm: Math.round(cumulativeDist) });
+            const found = await searchStationsAtLocation(stopLoc, selectedNetworks);
             allFoundStations.push(...found);
             currentSegmentDist = 0; // Reset segment distance for next stop
           }
         }
 
-        // De-duplicate stations by place_id
+        // De-duplicate by place_id using window.Map to avoid component name conflict
         const uniqueMap = new window.Map();
         allFoundStations.forEach(res => {
           if (res.place_id) uniqueMap.set(res.place_id, res);
         });
         
-        const finalStationsList = Array.from(uniqueMap.values());
-        
-        setStations(finalStationsList);
+        setStations(Array.from(uniqueMap.values()));
         setPlannedStops(stops);
         
         const bounds = new google.maps.LatLngBounds();
         bounds.extend(route.start_location);
         bounds.extend(route.end_location);
         stops.forEach(s => bounds.extend(s.location));
-        finalStationsList.forEach(s => bounds.extend(s.geometry.location));
         
         map?.fitBounds(bounds, { padding: 80 });
 
@@ -592,15 +559,8 @@ function MapView({
     
     let url = `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destinationStr}`;
     
-    const waypoints = [];
     if (selectedStation) {
-      waypoints.push(`${selectedStation.geometry.location.lat()},${selectedStation.geometry.location.lng()}`);
-    } else {
-      plannedStops.forEach(s => waypoints.push(`${s.location.lat()},${s.location.lng()}`));
-    }
-
-    if (waypoints.length > 0) {
-      url += `&waypoints=${encodeURIComponent(waypoints.join('|'))}`;
+      url += `&waypoints=${encodeURIComponent(`${selectedStation.geometry.location.lat()},${selectedStation.geometry.location.lng()}`)}`;
     }
 
     window.open(url, '_blank');
@@ -613,15 +573,11 @@ function MapView({
         defaultCenter={{ lat: 13.7367, lng: 100.5231 }}
         defaultZoom={12}
         gestureHandling={'greedy'}
-        disableDefaultUI={false}
         className="w-full h-full"
         onClick={handleMapClick}
       >
         {plannedStops.map((stop, i) => (
-          <AdvancedMarker
-            key={`stop-${i}`}
-            position={stop.location}
-          >
+          <AdvancedMarker key={`stop-${i}`} position={stop.location}>
              <div className="bg-secondary text-white px-3 py-1.5 rounded-2xl shadow-2xl border-2 border-white flex flex-col items-center animate-bounce z-10">
                 <Zap className="w-4 h-4 fill-white" />
                 <span className="text-[9px] font-black uppercase tracking-wider">จุดแวะที่ {i+1} ({stop.atKm} กม.)</span>
@@ -658,14 +614,6 @@ function MapView({
             <div className="p-2 min-w-[200px]">
               <h3 className="font-black text-sm text-primary mb-1">{selectedStation.name}</h3>
               <p className="text-[11px] text-muted-foreground leading-snug mb-2">{selectedStation.vicinity}</p>
-              <div className="flex items-center gap-2">
-                {selectedStation.rating && (
-                  <Badge variant="secondary" className="text-[9px] font-bold">⭐ {selectedStation.rating}</Badge>
-                )}
-                {selectedStation.opening_hours?.open_now && (
-                  <Badge variant="outline" className="text-[9px] font-bold border-green-500 text-green-600 bg-green-50">เปิดอยู่</Badge>
-                )}
-              </div>
               <Button 
                 size="sm" 
                 className="w-full mt-3 h-8 text-[10px] font-bold rounded-xl"
@@ -680,9 +628,9 @@ function MapView({
 
       {routeInfo && (
         <div className="absolute top-6 right-6 z-20 flex flex-col gap-5 w-[340px] md:w-[380px] max-h-[90vh] overflow-y-auto no-scrollbar">
-          <Card className="border-none shadow-[0_20px_50px_rgba(0,0,0,0.15)] bg-white/95 backdrop-blur-xl rounded-[2rem] overflow-hidden animate-in slide-in-from-right duration-700">
+          <Card className="border-none shadow-[0_20px_50px_rgba(0,0,0,0.15)] bg-white/95 backdrop-blur-xl rounded-[2rem] overflow-hidden">
             <CardHeader className="bg-primary/5 p-6 flex flex-row items-center gap-4 border-b border-primary/10">
-              <div className="bg-primary p-3 rounded-2xl shadow-lg shadow-primary/20">
+              <div className="bg-primary p-3 rounded-2xl">
                 <Route className="w-6 h-6 text-white" />
               </div>
               <div>
@@ -692,13 +640,13 @@ function MapView({
             </CardHeader>
             <CardContent className="p-6 space-y-6">
               <div className="grid grid-cols-2 gap-4">
-                <div className="bg-muted/40 p-4 rounded-2xl border border-border/20">
-                  <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter mb-1">ระยะทางรวม</p>
-                  <p className="text-xl font-black text-primary tabular-nums">{routeInfo.distance}</p>
+                <div className="bg-muted/40 p-4 rounded-2xl">
+                  <p className="text-[10px] text-muted-foreground uppercase font-black mb-1">ระยะทางรวม</p>
+                  <p className="text-xl font-black text-primary">{routeInfo.distance}</p>
                 </div>
-                <div className="bg-muted/40 p-4 rounded-2xl border border-border/20">
-                  <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter mb-1">เวลาขับขี่</p>
-                  <p className="text-xl font-black text-primary tabular-nums">{routeInfo.duration}</p>
+                <div className="bg-muted/40 p-4 rounded-2xl">
+                  <p className="text-[10px] text-muted-foreground uppercase font-black mb-1">เวลาขับขี่</p>
+                  <p className="text-xl font-black text-primary">{routeInfo.duration}</p>
                 </div>
               </div>
               
@@ -706,36 +654,25 @@ function MapView({
                 <div className="space-y-4">
                   <div className="bg-secondary/5 p-5 rounded-[1.5rem] border-2 border-dashed border-secondary/30 flex flex-col gap-4">
                     <div className="flex items-center gap-4">
-                      <div className="bg-secondary p-2.5 rounded-xl shadow-md shadow-secondary/20">
+                      <div className="bg-secondary p-2.5 rounded-xl">
                         <Zap className="w-5 h-5 text-white fill-white" />
                       </div>
                       <div>
                         <p className="text-sm font-black text-secondary">ต้องแวะชาร์จ {plannedStops.length} ครั้ง</p>
-                        <p className="text-[11px] font-bold text-muted-foreground">รัศมี 20 กม. รอบทุกจุดที่แบตเริ่มต่ำ</p>
+                        <p className="text-[11px] font-bold text-muted-foreground">รัศมี 20 กม. รอบจุดแบตเตอรี่ต่ำ</p>
                       </div>
                     </div>
-                    
-                    {selectedStation ? (
+                    {selectedStation && (
                       <div className="pt-3 border-t border-secondary/20">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-[12px] font-black text-primary truncate">{selectedStation.name}</p>
-                            <p className="text-[10px] font-medium text-muted-foreground truncate">{selectedStation.vicinity}</p>
-                          </div>
-                          <Badge className="bg-primary text-white text-[9px] shrink-0 ml-2">เลือกแล้ว</Badge>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-center p-3 rounded-xl bg-white/50 border border-secondary/20">
-                        <AlertCircle className="w-3.5 h-3.5 text-secondary mr-2" />
-                        <p className="text-[10px] font-black text-secondary uppercase tracking-widest">เลือกสถานีบนแผนที่หรือรายการด้านล่าง</p>
+                        <p className="text-[12px] font-black text-primary truncate">{selectedStation.name}</p>
+                        <Badge className="bg-primary text-white text-[9px] mt-1">เลือกแล้ว</Badge>
                       </div>
                     )}
                   </div>
 
                   {stations.length > 0 && (
                     <div className="space-y-2">
-                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">ตัวเลือกสถานีใกล้เคียงในรัศมี 20 กม. ({stations.length})</p>
+                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">ตัวเลือกสถานี (รัศมี 20 กม.)</p>
                       <ScrollArea className="h-[200px] rounded-2xl border border-border/50 p-2">
                         <div className="space-y-2">
                           {stations.map((s, idx) => (
@@ -744,7 +681,6 @@ function MapView({
                               onClick={() => {
                                 setSelectedStation(s);
                                 map?.panTo(s.geometry.location);
-                                map?.setZoom(16);
                               }}
                               className={cn(
                                 "w-full text-left p-3 rounded-xl transition-all border",
@@ -753,10 +689,7 @@ function MapView({
                                   : "bg-white border-transparent hover:bg-muted/30"
                               )}
                             >
-                              <div className="flex justify-between items-start gap-2">
-                                <p className="text-[11px] font-bold text-foreground truncate">{s.name}</p>
-                                {s.rating && <span className="text-[10px] font-bold text-orange-500 shrink-0">⭐ {s.rating}</span>}
-                              </div>
+                              <p className="text-[11px] font-bold text-foreground truncate">{s.name}</p>
                               <p className="text-[9px] text-muted-foreground truncate">{s.vicinity}</p>
                             </button>
                           ))}
@@ -779,8 +712,7 @@ function MapView({
 
               <Button 
                 onClick={openInGoogleMaps}
-                disabled={plannedStops.length > 0 && !selectedStation && stations.length > 0}
-                className="w-full bg-secondary hover:bg-secondary/90 text-white rounded-2xl h-14 font-black shadow-[0_10px_30px_rgba(31,140,140,0.3)] transition-all flex items-center justify-center gap-3 group"
+                className="w-full bg-secondary hover:bg-secondary/90 text-white rounded-2xl h-14 font-black shadow-lg transition-all flex items-center justify-center gap-3 group"
               >
                 <MapIcon className="w-5 h-5" />
                 <span>นำทางผ่าน Google Maps</span>
