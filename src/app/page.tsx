@@ -122,7 +122,7 @@ function TripForm({
 }) {
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
-  const [fullRange, setFullRange] = useState(400);
+  const [fullRange, setFullRange] = useState(410);
   const [minBatteryThreshold, setMinBatteryThreshold] = useState(15);
   const [selectedNetworks, setSelectedNetworks] = useState<string[]>(CHARGING_NETWORKS.map(n => n.id));
   
@@ -401,10 +401,10 @@ function MapView({
     
     const service = new google.maps.places.PlacesService(map);
     return new Promise<any[]>((resolve) => {
-      // Broad Nearby Search according to requirement: "PTT EV", "ปตท EV", "PEA VOLTA", "VOLTA", "ELEXA", "EV Charging Station"
+      // Broad Nearby Search as requested
       service.nearbySearch({
         location,
-        radius: 20000, // 20km radius as requested
+        radius: 20000, // 20km radius
         keyword: "PTT EV ปตท EV EV Station Pluz PEA VOLTA VOLTA ELEXA SPARK EV Charging Station",
         type: 'car_charging_station'
       }, (results, status) => {
@@ -422,7 +422,7 @@ function MapView({
     
     const calculateRoute = async () => {
       setIsLoading(true);
-      const { origin, destination, fullRange, minBatteryThreshold } = tripData;
+      const { origin, destination, fullRange, minBatteryThreshold, selectedNetworks } = tripData;
       const directionsService = new google.maps.DirectionsService();
       
       try {
@@ -458,17 +458,14 @@ function MapView({
         let currentSegmentDist = 0;
         let cumulativeDist = 0;
 
-        // Loop through the path points to find precise stop locations
         for (let i = 0; i < path.length - 1; i++) {
           const p1 = path[i];
           const p2 = path[i+1];
-          // Use spherical geometry to compute distance between LatLng points
           const d = google.maps.geometry.spherical.computeDistanceBetween(p1, p2) / 1000;
           
           currentSegmentDist += d;
           cumulativeDist += d;
 
-          // If segment exceeds usable range, place a stop
           if (currentSegmentDist >= usableRangePerCharge) {
             const stopLoc = p2;
             stops.push({
@@ -476,31 +473,59 @@ function MapView({
               atKm: Math.round(cumulativeDist)
             });
             
-            // Search around this point (20km radius)
             const found = await searchStationsAtLocation(stopLoc);
             allFoundStations.push(...found);
-            
-            // RESET segment distance to measure accurately for the next stop
             currentSegmentDist = 0; 
           }
         }
 
-        // De-duplicate final stations
-        const finalUniqueStationsMap = new window.Map();
-        allFoundStations.forEach(s => {
-          if (s.place_id) finalUniqueStationsMap.set(s.place_id, s);
+        // De-duplicate by place_id
+        const uniqueMap = new window.Map();
+        allFoundStations.forEach(res => {
+          if (res.place_id) uniqueMap.set(res.place_id, res);
         });
         
-        const finalStationsList = Array.from(finalUniqueStationsMap.values());
-        setStations(finalStationsList);
+        const finalStationsList = Array.from(uniqueMap.values());
+        
+        // APPLY FILTERING LOGIC
+        const filteredStations = finalStationsList.filter(s => {
+          // ถ้าไม่ได้เลือก network ไหนเลย ให้แสดงทั้งหมด
+          if (!selectedNetworks || selectedNetworks.length === 0) return true;
+          
+          const name = (s.name || "").toUpperCase();
+          const vicinity = (s.vicinity || "").toUpperCase();
+          const combinedText = `${name} ${vicinity}`;
+          const thaiText = `${s.name || ""} ${s.vicinity || ""}`;
+
+          return selectedNetworks.some((id: string) => {
+            if (id === 'ptt') {
+              // PTT EV STATION → ชื่อต้องมีคำว่า "PTT" หรือ "ปตท"
+              return combinedText.includes("PTT") || thaiText.includes("ปตท");
+            }
+            if (id === 'pea') {
+              // PEA VOLTA → ชื่อต้องมีคำว่า "PEA" หรือ "VOLTA" หรือ "โวลต้า"
+              return combinedText.includes("PEA") || combinedText.includes("VOLTA") || thaiText.includes("โวลต้า");
+            }
+            if (id === 'elexa') {
+              // ELEXA → ชื่อต้องมีคำว่า "ELEXA" หรือ "EleXA"
+              return combinedText.includes("ELEXA");
+            }
+            if (id === 'spark') {
+              // SPARK EV → ชื่อต้องมีคำว่า "SPARK"
+              return combinedText.includes("SPARK");
+            }
+            return false;
+          });
+        });
+
+        setStations(filteredStations);
         setPlannedStops(stops);
         
-        // Adjust map bounds
         const bounds = new google.maps.LatLngBounds();
         bounds.extend(route.start_location);
         bounds.extend(route.end_location);
         stops.forEach(s => bounds.extend(s.location));
-        finalStationsList.forEach(s => bounds.extend(s.geometry.location));
+        filteredStations.forEach(s => bounds.extend(s.geometry.location));
         
         map?.fitBounds(bounds, { padding: 80 });
 
@@ -735,4 +760,3 @@ function MapView({
     </>
   );
 }
-
