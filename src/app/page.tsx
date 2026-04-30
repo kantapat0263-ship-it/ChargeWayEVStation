@@ -1,6 +1,7 @@
+
 "use client";
 
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { 
   APIProvider, 
   Map, 
@@ -8,7 +9,8 @@ import {
   useMap, 
   AdvancedMarker, 
   Pin,
-  InfoWindow
+  InfoWindow,
+  MapMouseEvent
 } from '@vis.gl/react-google-maps';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -30,19 +32,20 @@ import {
   LocateFixed,
   Map as MapIcon,
   Search,
-  AlertTriangle
+  Crosshair,
+  Target
 } from 'lucide-react';
 import { CHARGING_NETWORKS, ATTO3_RANGE_KM, SAFETY_MARGIN_PERCENT } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
-// Google Maps API Key provided by user
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PIl-0fyiz40tHHH8Hnk";
 
 export default function ChargeWayApp() {
   const [tripData, setTripData] = useState<any>(null);
+  const [isPickingOnMap, setIsPickingOnMap] = useState<'origin' | 'destination' | null>(null);
 
   return (
-    <APIProvider apiKey={GOOGLE_MAPS_API_KEY}>
+    <APIProvider apiKey={GOOGLE_MAPS_API_KEY} libraries={['places', 'geocoding', 'routes']}>
       <div className="flex flex-col lg:flex-row h-screen w-full bg-background overflow-hidden font-body selection:bg-primary/20">
         {/* Left Control Panel */}
         <div className="w-full lg:w-[420px] h-full flex flex-col border-r border-border bg-card z-20 shadow-2xl overflow-hidden relative">
@@ -58,14 +61,18 @@ export default function ChargeWayApp() {
                 </div>
               </div>
               <Badge variant="outline" className="rounded-full bg-secondary/5 text-secondary border-secondary/20 font-bold px-3">
-                v1.2.1
+                v1.3.0
               </Badge>
             </div>
           </header>
 
           <ScrollArea className="flex-1">
             <main className="p-6 space-y-8">
-              <TripForm onPlanTrip={setTripData} />
+              <TripForm 
+                onPlanTrip={setTripData} 
+                isPickingOnMap={isPickingOnMap}
+                setIsPickingOnMap={setIsPickingOnMap}
+              />
               {tripData && <RouteSummary tripData={tripData} />}
             </main>
           </ScrollArea>
@@ -77,20 +84,79 @@ export default function ChargeWayApp() {
 
         {/* Right Map Panel */}
         <div className="flex-1 relative h-[60vh] lg:h-full bg-slate-50">
-          <MapView tripData={tripData} />
+          <MapView 
+            tripData={tripData} 
+            isPickingOnMap={isPickingOnMap}
+            setIsPickingOnMap={setIsPickingOnMap}
+          />
+          {isPickingOnMap && (
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 pointer-events-none">
+              <div className="bg-primary/90 text-white px-6 py-3 rounded-full shadow-2xl backdrop-blur-md flex items-center gap-3 animate-pulse">
+                <Target className="w-5 h-5" />
+                <span className="text-sm font-black uppercase tracking-widest">
+                  Click on map to set {isPickingOnMap}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </APIProvider>
   );
 }
 
-function TripForm({ onPlanTrip }: { onPlanTrip: (data: any) => void }) {
+function TripForm({ 
+  onPlanTrip, 
+  isPickingOnMap, 
+  setIsPickingOnMap 
+}: { 
+  onPlanTrip: (data: any) => void;
+  isPickingOnMap: 'origin' | 'destination' | null;
+  setIsPickingOnMap: (val: 'origin' | 'destination' | null) => void;
+}) {
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
   const [currentBattery, setCurrentBattery] = useState(80);
   const [targetCharge, setTargetCharge] = useState(85);
   const [selectedNetworks, setSelectedNetworks] = useState<string[]>([]);
   
+  const originInputRef = useRef<HTMLInputElement>(null);
+  const destinationInputRef = useRef<HTMLInputElement>(null);
+  const placesLib = useMapsLibrary('places');
+
+  // Sync state if changed externally (from map click)
+  useEffect(() => {
+    const handleLocationUpdate = (e: any) => {
+      if (e.detail.type === 'origin') setOrigin(e.detail.address);
+      if (e.detail.type === 'destination') setDestination(e.detail.address);
+    };
+    window.addEventListener('google-map-picker-update', handleLocationUpdate);
+    return () => window.removeEventListener('google-map-picker-update', handleLocationUpdate);
+  }, []);
+
+  // Initialize Autocomplete
+  useEffect(() => {
+    if (!placesLib || !originInputRef.current || !destinationInputRef.current) return;
+
+    const options = {
+      componentRestrictions: { country: "th" },
+      fields: ["address_components", "geometry", "name", "formatted_address"],
+    };
+
+    const originAutocomplete = new placesLib.Autocomplete(originInputRef.current, options);
+    const destinationAutocomplete = new placesLib.Autocomplete(destinationInputRef.current, options);
+
+    originAutocomplete.addListener("place_changed", () => {
+      const place = originAutocomplete.getPlace();
+      if (place.formatted_address) setOrigin(place.formatted_address);
+    });
+
+    destinationAutocomplete.addListener("place_changed", () => {
+      const place = destinationAutocomplete.getPlace();
+      if (place.formatted_address) setDestination(place.formatted_address);
+    });
+  }, [placesLib]);
+
   const toggleNetwork = (id: string) => {
     setSelectedNetworks(prev => 
       prev.includes(id) ? prev.filter(n => n !== id) : [...prev, id]
@@ -122,28 +188,58 @@ function TripForm({ onPlanTrip }: { onPlanTrip: (data: any) => void }) {
         </div>
         
         <div className="space-y-3">
-          <div className="relative group">
-            <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-primary transition-colors">
-              <MapPin className="w-4.5 h-4.5" />
+          <div className="flex items-center gap-2 group">
+            <div className="relative flex-1">
+              <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-primary transition-colors">
+                <MapPin className="w-4.5 h-4.5" />
+              </div>
+              <Input 
+                ref={originInputRef}
+                placeholder="Origin" 
+                value={origin} 
+                onChange={e => setOrigin(e.target.value)}
+                className="pl-11 h-13 rounded-2xl border-border/80 focus:ring-primary/20 bg-background/50 text-sm font-medium transition-all"
+              />
             </div>
-            <Input 
-              placeholder="Origin (e.g. Bangkok)" 
-              value={origin} 
-              onChange={e => setOrigin(e.target.value)}
-              className="pl-11 h-13 rounded-2xl border-border/80 focus:ring-primary/20 bg-background/50 text-sm font-medium transition-all"
-            />
+            <Button
+              variant={isPickingOnMap === 'origin' ? 'default' : 'outline'}
+              size="icon"
+              className={cn(
+                "h-13 w-13 rounded-2xl shrink-0 transition-all",
+                isPickingOnMap === 'origin' && "animate-pulse"
+              )}
+              onClick={() => setIsPickingOnMap(isPickingOnMap === 'origin' ? null : 'origin')}
+              title="Select origin on map"
+            >
+              <Crosshair className="w-5 h-5" />
+            </Button>
           </div>
 
-          <div className="relative group">
-            <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-secondary transition-colors">
-              <Navigation className="w-4.5 h-4.5" />
+          <div className="flex items-center gap-2 group">
+            <div className="relative flex-1">
+              <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-secondary transition-colors">
+                <Navigation className="w-4.5 h-4.5" />
+              </div>
+              <Input 
+                ref={destinationInputRef}
+                placeholder="Destination" 
+                value={destination} 
+                onChange={e => setDestination(e.target.value)}
+                className="pl-11 h-13 rounded-2xl border-border/80 focus:ring-secondary/20 bg-background/50 text-sm font-medium transition-all"
+              />
             </div>
-            <Input 
-              placeholder="Destination (e.g. Chiang Mai)" 
-              value={destination} 
-              onChange={e => setDestination(e.target.value)}
-              className="pl-11 h-13 rounded-2xl border-border/80 focus:ring-secondary/20 bg-background/50 text-sm font-medium transition-all"
-            />
+            <Button
+              variant={isPickingOnMap === 'destination' ? 'default' : 'outline'}
+              size="icon"
+              className={cn(
+                "h-13 w-13 rounded-2xl shrink-0 transition-all",
+                isPickingOnMap === 'destination' && "animate-pulse"
+              )}
+              onClick={() => setIsPickingOnMap(isPickingOnMap === 'destination' ? null : 'destination')}
+              title="Select destination on map"
+            >
+              <Crosshair className="w-5 h-5" />
+            </Button>
           </div>
         </div>
       </section>
@@ -254,10 +350,20 @@ function RouteSummary({ tripData }: { tripData: any }) {
   );
 }
 
-function MapView({ tripData }: { tripData: any }) {
+function MapView({ 
+  tripData, 
+  isPickingOnMap, 
+  setIsPickingOnMap 
+}: { 
+  tripData: any;
+  isPickingOnMap: 'origin' | 'destination' | null;
+  setIsPickingOnMap: (val: 'origin' | 'destination' | null) => void;
+}) {
   const map = useMap();
   const routesLib = useMapsLibrary('routes');
   const placesLib = useMapsLibrary('places');
+  const geocodingLib = useMapsLibrary('geocoding');
+  
   const [directionsRenderer, setDirectionsRenderer] = useState<google.maps.DirectionsRenderer | null>(null);
   const [stations, setStations] = useState<any[]>([]);
   const [plannedStops, setPlannedStops] = useState<any[]>([]);
@@ -279,6 +385,26 @@ function MapView({ tripData }: { tripData: any }) {
     setDirectionsRenderer(renderer);
     return () => renderer.setMap(null);
   }, [routesLib, map]);
+
+  const handleMapClick = useCallback((e: MapMouseEvent) => {
+    if (!isPickingOnMap || !e.detail.latLng || !geocodingLib) return;
+
+    const latLng = e.detail.latLng;
+    const geocoder = new geocodingLib.Geocoder();
+
+    geocoder.geocode({ location: latLng }, (results, status) => {
+      if (status === 'OK' && results && results[0]) {
+        const address = results[0].formatted_address;
+        
+        // Dispatch custom event to update form
+        window.dispatchEvent(new CustomEvent('google-map-picker-update', {
+          detail: { type: isPickingOnMap, address }
+        }));
+        
+        setIsPickingOnMap(null);
+      }
+    });
+  }, [isPickingOnMap, geocodingLib, setIsPickingOnMap]);
 
   const searchStations = useCallback((location: google.maps.LatLng, radius: number, networkQueries: string[]) => {
     if (!placesLib || !map) return;
@@ -409,6 +535,7 @@ function MapView({ tripData }: { tripData: any }) {
         gestureHandling={'greedy'}
         disableDefaultUI={false}
         className="w-full h-full"
+        onClick={handleMapClick}
       >
         {plannedStops.map((stop, i) => (
           <AdvancedMarker
