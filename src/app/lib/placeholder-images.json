@@ -1,0 +1,17 @@
+
+{
+  "placeholderImages": [
+    {
+      "id": "app-hero",
+      "description": "Electric vehicle charging on a scenic road",
+      "imageUrl": "https://picsum.photos/seed/ev-charge/1200/800",
+      "imageHint": "electric car charging"
+    },
+    {
+      "id": "station-placeholder",
+      "description": "EV Charging Station",
+      "imageUrl": "https://picsum.photos/seed/station/400/300",
+      "imageHint": "ev station"
+    }
+  ]
+}
