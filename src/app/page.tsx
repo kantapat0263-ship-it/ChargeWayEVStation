@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -405,11 +404,12 @@ function MapView({
       service.nearbySearch({
         location,
         radius: 20000, // 20km radius
-        keyword: "PTT EV ปตท EV EV Station Pluz PEA VOLTA VOLTA ELEXA SPARK EV Charging Station",
+        keyword: "PTT EV ปตท EV PEA VOLTA VOLTA ELEXA SPARK EV Charging Station",
         type: 'car_charging_station'
       }, (results, status) => {
         if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-          resolve(results);
+          // Limit to maxResultCount = 10 as requested
+          resolve(results.slice(0, 10));
         } else {
           resolve([]);
         }
@@ -479,7 +479,7 @@ function MapView({
           }
         }
 
-        // De-duplicate by place_id
+        // De-duplicate by place_id using window.Map to avoid collision with Map component
         const uniqueMap = new window.Map();
         allFoundStations.forEach(res => {
           if (res.place_id) uniqueMap.set(res.place_id, res);
@@ -487,45 +487,15 @@ function MapView({
         
         const finalStationsList = Array.from(uniqueMap.values());
         
-        // APPLY FILTERING LOGIC
-        const filteredStations = finalStationsList.filter(s => {
-          // ถ้าไม่ได้เลือก network ไหนเลย ให้แสดงทั้งหมด
-          if (!selectedNetworks || selectedNetworks.length === 0) return true;
-          
-          const name = (s.name || "").toUpperCase();
-          const vicinity = (s.vicinity || "").toUpperCase();
-          const combinedText = `${name} ${vicinity}`;
-          const thaiText = `${s.name || ""} ${s.vicinity || ""}`;
-
-          return selectedNetworks.some((id: string) => {
-            if (id === 'ptt') {
-              // PTT EV STATION → ชื่อต้องมีคำว่า "PTT" หรือ "ปตท"
-              return combinedText.includes("PTT") || thaiText.includes("ปตท");
-            }
-            if (id === 'pea') {
-              // PEA VOLTA → ชื่อต้องมีคำว่า "PEA" หรือ "VOLTA" หรือ "โวลต้า"
-              return combinedText.includes("PEA") || combinedText.includes("VOLTA") || thaiText.includes("โวลต้า");
-            }
-            if (id === 'elexa') {
-              // ELEXA → ชื่อต้องมีคำว่า "ELEXA" หรือ "EleXA"
-              return combinedText.includes("ELEXA");
-            }
-            if (id === 'spark') {
-              // SPARK EV → ชื่อต้องมีคำว่า "SPARK"
-              return combinedText.includes("SPARK");
-            }
-            return false;
-          });
-        });
-
-        setStations(filteredStations);
+        // Show all results without filtering as requested in point 4
+        setStations(finalStationsList);
         setPlannedStops(stops);
         
         const bounds = new google.maps.LatLngBounds();
         bounds.extend(route.start_location);
         bounds.extend(route.end_location);
         stops.forEach(s => bounds.extend(s.location));
-        filteredStations.forEach(s => bounds.extend(s.geometry.location));
+        finalStationsList.forEach(s => bounds.extend(s.geometry.location));
         
         map?.fitBounds(bounds, { padding: 80 });
 
