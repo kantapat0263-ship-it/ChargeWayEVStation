@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -62,7 +63,7 @@ export default function ChargeWayApp() {
                 </div>
               </div>
               <Badge variant="outline" className="rounded-full bg-secondary/5 text-secondary border-secondary/20 font-bold px-3">
-                Multi-Stop v3.3
+                Multi-Stop v3.5
               </Badge>
             </div>
           </header>
@@ -287,7 +288,6 @@ function TripForm({
             className="py-1 cursor-pointer"
           />
           
-          {/* New Display: Distance that can be traveled */}
           <div className="pt-2 border-t border-border/40 mt-4 flex items-center justify-between">
              <div className="flex items-center gap-2">
                 <div className="bg-green-500/10 p-1 rounded-md">
@@ -300,7 +300,6 @@ function TripForm({
                 <span className="text-[10px] font-bold text-muted-foreground italic">/ ชาร์จ</span>
              </div>
           </div>
-          <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider text-right italic">ระบบจะค้นหาสถานีชาร์จทุกจุดที่แบตลดถึงระดับนี้</p>
         </div>
       </section>
 
@@ -400,23 +399,24 @@ function MapView({
     });
   }, [isPickingOnMap, geocodingLib, setIsPickingOnMap]);
 
-  const searchStations = useCallback((location: google.maps.LatLng, networkQueries: string[]) => {
+  const searchStationsAtLocation = useCallback((location: google.maps.LatLng, networkQueries: string[]) => {
     if (!placesLib || !map) return;
     const service = new google.maps.places.PlacesService(map);
     
-    const queries = networkQueries.length > 0 ? networkQueries : ['EV Charging Station'];
+    // If no networks selected, search generic
+    const queriesToRun = networkQueries.length > 0 ? networkQueries : ['EV Charging Station'];
 
-    queries.forEach(query => {
+    queriesToRun.forEach(query => {
       service.nearbySearch({
         location,
-        radius: 10000, // 10km radius as requested
+        radius: 10000, // 10km radius
         keyword: query,
         type: 'car_charging_station'
       }, (results, status) => {
         if (status === google.maps.places.PlacesServiceStatus.OK && results) {
           setStations(prev => {
             const existingIds = new Set(prev.map(s => s.place_id));
-            const newStations = results.filter(r => !existingIds.has(r.place_id));
+            const newStations = results.filter(r => r.place_id && !existingIds.has(r.place_id));
             return [...prev, ...newStations];
           });
         }
@@ -425,7 +425,7 @@ function MapView({
   }, [placesLib, map]);
 
   useEffect(() => {
-    if (!tripData || !routesLib || !directionsRenderer || !placesLib || !map) return;
+    if (!tripData || !routesLib || !directionsRenderer || !map) return;
     
     const calculateRoute = async () => {
       setIsLoading(true);
@@ -453,36 +453,33 @@ function MapView({
         setPlannedStops([]);
         setSelectedStation(null);
 
-        // Distance thresholds
-        const thresholdKm = (minBatteryThreshold / 100) * fullRange;
-        const usableFullKm = Math.max(0, fullRange - thresholdKm);
+        // Calculate thresholds
+        const usableRangeKm = fullRange * (1 - minBatteryThreshold / 100);
 
         const stops: any[] = [];
         const networkQueries = selectedNetworks.map((id: string) => 
           CHARGING_NETWORKS.find(n => n.id === id)?.query || ""
         ).filter(Boolean);
 
-        let cumulativeDist = 0;
-        let nextTargetDist = usableFullKm;
+        let currentSegmentDist = 0;
 
-        if (totalDistanceKm > usableFullKm) {
+        if (totalDistanceKm > usableRangeKm) {
           route.steps.forEach(step => {
             const stepDist = (step.distance?.value || 0) / 1000;
-            const newCumulativeDist = cumulativeDist + stepDist;
+            currentSegmentDist += stepDist;
 
-            if (newCumulativeDist >= nextTargetDist) {
+            if (currentSegmentDist >= usableRangeKm) {
               const stopLoc = step.end_location;
               stops.push({
                 location: stopLoc,
                 title: `จุดชาร์จที่ ${stops.length + 1}`
               });
               
-              // Trigger search for stations around this stop
-              searchStations(stopLoc, networkQueries);
+              // Search stations around this calculated stop
+              searchStationsAtLocation(stopLoc, networkQueries);
               
-              nextTargetDist += usableFullKm;
+              currentSegmentDist = 0; // Reset for next segment
             }
-            cumulativeDist = newCumulativeDist;
           });
         }
 
@@ -502,7 +499,7 @@ function MapView({
     };
 
     calculateRoute();
-  }, [tripData, routesLib, directionsRenderer, searchStations, map, placesLib]);
+  }, [tripData, routesLib, directionsRenderer, searchStationsAtLocation, map]);
 
   const openInGoogleMaps = () => {
     if (!directionsRenderer) return;
@@ -547,7 +544,7 @@ function MapView({
           >
              <div className="bg-secondary text-white px-3 py-1.5 rounded-2xl shadow-2xl border-2 border-white flex flex-col items-center animate-bounce z-10">
                 <Zap className="w-4 h-4 fill-white" />
-                <span className="text-[9px] font-black uppercase tracking-wider">ต้องชาร์จจุดที่ {i+1}</span>
+                <span className="text-[9px] font-black uppercase tracking-wider">จุดแวะที่ {i+1}</span>
              </div>
           </AdvancedMarker>
         ))}
@@ -557,7 +554,10 @@ function MapView({
             key={station.place_id || i}
             position={station.geometry.location}
             title={station.name}
-            onClick={() => setSelectedStation(station)}
+            onClick={() => {
+              setSelectedStation(station);
+              map?.panTo(station.geometry.location);
+            }}
           >
             <Pin 
               background={selectedStation?.place_id === station.place_id ? '#FF5722' : '#1F8C8C'} 
@@ -613,11 +613,11 @@ function MapView({
             </CardHeader>
             <CardContent className="p-6 space-y-6">
               <div className="grid grid-cols-2 gap-4">
-                <div className="bg-muted/40 p-4 rounded-2xl border border-border/20 group hover:bg-muted/60 transition-colors">
+                <div className="bg-muted/40 p-4 rounded-2xl border border-border/20">
                   <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter mb-1">ระยะทางรวม</p>
                   <p className="text-xl font-black text-primary tabular-nums">{routeInfo.distance}</p>
                 </div>
-                <div className="bg-muted/40 p-4 rounded-2xl border border-border/20 group hover:bg-muted/60 transition-colors">
+                <div className="bg-muted/40 p-4 rounded-2xl border border-border/20">
                   <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter mb-1">เวลาขับขี่</p>
                   <p className="text-xl font-black text-primary tabular-nums">{routeInfo.duration}</p>
                 </div>
@@ -632,12 +632,12 @@ function MapView({
                       </div>
                       <div>
                         <p className="text-sm font-black text-secondary">ต้องแวะชาร์จ {plannedStops.length} ครั้ง</p>
-                        <p className="text-[11px] font-bold text-muted-foreground">แสดงสถานีชาร์จรอบจุดแวะ 10 กม.</p>
+                        <p className="text-[11px] font-bold text-muted-foreground">รัศมีสถานีที่แนะนำ 10 กม.</p>
                       </div>
                     </div>
                     
                     {selectedStation ? (
-                      <div className="pt-3 border-t border-secondary/20 animate-in fade-in zoom-in-95">
+                      <div className="pt-3 border-t border-secondary/20">
                         <div className="flex items-start justify-between">
                           <div className="flex-1 min-w-0">
                             <p className="text-[12px] font-black text-primary truncate">{selectedStation.name}</p>
@@ -647,7 +647,7 @@ function MapView({
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center justify-center p-3 rounded-xl bg-white/50 border border-secondary/20 animate-pulse-soft">
+                      <div className="flex items-center justify-center p-3 rounded-xl bg-white/50 border border-secondary/20">
                         <AlertCircle className="w-3.5 h-3.5 text-secondary mr-2" />
                         <p className="text-[10px] font-black text-secondary uppercase tracking-widest">กรุณาเลือกสถานีบนแผนที่</p>
                       </div>
@@ -657,7 +657,7 @@ function MapView({
                   {/* List of stations found */}
                   {stations.length > 0 && (
                     <div className="space-y-2">
-                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">สถานีที่พบ ({stations.length})</p>
+                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">สถานีเครือข่ายที่พบ ({stations.length})</p>
                       <ScrollArea className="h-[180px] rounded-2xl border border-border/50 p-2">
                         <div className="space-y-2">
                           {stations.map((s, idx) => (
@@ -689,7 +689,7 @@ function MapView({
                 </div>
               ) : (
                 <div className="bg-green-500/10 p-5 rounded-[1.5rem] border-2 border-dashed border-green-500/20 flex items-center gap-4">
-                  <div className="bg-green-500 p-2.5 rounded-xl shadow-md shadow-green-500/20">
+                  <div className="bg-green-500 p-2.5 rounded-xl">
                     <Car className="w-5 h-5 text-white" />
                   </div>
                   <div>
@@ -702,7 +702,7 @@ function MapView({
               <Button 
                 onClick={openInGoogleMaps}
                 disabled={plannedStops.length > 0 && !selectedStation && stations.length > 0}
-                className="w-full bg-secondary hover:bg-secondary/90 text-white rounded-2xl h-14 font-black shadow-[0_10px_30px_rgba(31,140,140,0.3)] transition-all flex items-center justify-center gap-3 group relative overflow-hidden"
+                className="w-full bg-secondary hover:bg-secondary/90 text-white rounded-2xl h-14 font-black shadow-[0_10px_30px_rgba(31,140,140,0.3)] transition-all flex items-center justify-center gap-3 group"
               >
                 <MapIcon className="w-5 h-5" />
                 <span>นำทางผ่าน Google Maps</span>
@@ -717,7 +717,7 @@ function MapView({
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/20 backdrop-blur-sm">
            <div className="flex flex-col items-center gap-4 bg-white p-8 rounded-[2.5rem] shadow-2xl border border-primary/10">
               <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-              <p className="text-sm font-black text-primary uppercase tracking-[0.2em]">กำลังวิเคราะห์สถานีชาร์จ...</p>
+              <p className="text-sm font-black text-primary uppercase tracking-[0.2em]">กำลังวิเคราะห์สถานีชาร์จ 10 กม...</p>
            </div>
         </div>
       )}
