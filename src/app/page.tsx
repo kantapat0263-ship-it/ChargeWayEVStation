@@ -42,6 +42,9 @@ import { cn } from '@/lib/utils';
 
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PIl-0fyiz40tHHH8Hnk";
 
+// EPA Efficiency Factor (Typical real-world adjustment vs advertised WLTP/NEDC)
+const EPA_FACTOR = 0.85; 
+
 export default function ChargeWayApp() {
   const [tripData, setTripData] = useState<any>(null);
   const [isPickingOnMap, setIsPickingOnMap] = useState<'origin' | 'destination' | null>(null);
@@ -63,7 +66,7 @@ export default function ChargeWayApp() {
                 </div>
               </div>
               <Badge variant="outline" className="rounded-full bg-secondary/5 text-secondary border-secondary/20 font-bold px-3">
-                Multi-Stop v3.5
+                EPA Standard
               </Badge>
             </div>
           </header>
@@ -126,8 +129,8 @@ function TripForm({
   const destinationInputRef = useRef<HTMLInputElement>(null);
   const placesLib = useMapsLibrary('places');
 
-  // Calculate usable range
-  const usableRange = Math.round(fullRange * (1 - minBatteryThreshold / 100));
+  // EPA Usable range calculation
+  const usableRange = Math.round(fullRange * (1 - minBatteryThreshold / 100) * EPA_FACTOR);
 
   useEffect(() => {
     const handleLocationUpdate = (e: any) => {
@@ -247,7 +250,7 @@ function TripForm({
       <section className="space-y-6">
         <div className="flex items-center gap-2 mb-2">
           <div className="w-1.5 h-4 bg-primary rounded-full" />
-          <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">การตั้งค่าพลังงาน</h2>
+          <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">การตั้งค่าพลังงาน (EPA Standard)</h2>
         </div>
 
         <div className="space-y-5 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
@@ -275,7 +278,7 @@ function TripForm({
               <div className="p-1.5 bg-secondary/10 rounded-lg text-secondary">
                 <Zap className="w-4 h-4" />
               </div> 
-              ต้องชาร์จเมื่อแบตเหลือ
+              จุดเริ่มชาร์จ (แบตเหลือ %)
             </Label>
             <span className="text-sm font-black text-secondary bg-secondary/10 px-3 py-1 rounded-xl tabular-nums">{minBatteryThreshold}%</span>
           </div>
@@ -293,13 +296,16 @@ function TripForm({
                 <div className="bg-green-500/10 p-1 rounded-md">
                    <Route className="w-3.5 h-3.5 text-green-600" />
                 </div>
-                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">ระยะทางที่วิ่งได้จริง</span>
+                <div>
+                   <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">ระยะวิ่งจริง (EPA Estimated)</span>
+                </div>
              </div>
              <div className="flex items-center gap-1.5">
                 <span className="text-sm font-black text-green-600 tabular-nums">{usableRange} กม.</span>
                 <span className="text-[10px] font-bold text-muted-foreground italic">/ ชาร์จ</span>
              </div>
           </div>
+          <p className="text-[10px] text-muted-foreground italic text-right opacity-70">* คำนวณที่ 85% ของสเปคโรงงานเพื่อความปลอดภัยในการเดินทางจริง</p>
         </div>
       </section>
 
@@ -403,7 +409,6 @@ function MapView({
     if (!placesLib || !map) return;
     const service = new google.maps.places.PlacesService(map);
     
-    // If no networks selected, search generic
     const queriesToRun = networkQueries.length > 0 ? networkQueries : ['EV Charging Station'];
 
     queriesToRun.forEach(query => {
@@ -453,8 +458,8 @@ function MapView({
         setPlannedStops([]);
         setSelectedStation(null);
 
-        // Calculate thresholds
-        const usableRangeKm = fullRange * (1 - minBatteryThreshold / 100);
+        // Calculate thresholds using EPA Adjustment
+        const usableRangeKm = fullRange * (1 - minBatteryThreshold / 100) * EPA_FACTOR;
 
         const stops: any[] = [];
         const networkQueries = selectedNetworks.map((id: string) => 
@@ -475,10 +480,8 @@ function MapView({
                 title: `จุดชาร์จที่ ${stops.length + 1}`
               });
               
-              // Search stations around this calculated stop
               searchStationsAtLocation(stopLoc, networkQueries);
-              
-              currentSegmentDist = 0; // Reset for next segment
+              currentSegmentDist = 0; 
             }
           });
         }
@@ -607,8 +610,8 @@ function MapView({
                 <Route className="w-6 h-6 text-white" />
               </div>
               <div>
-                <CardTitle className="text-base font-black text-primary">สรุปการเดินทาง</CardTitle>
-                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">วิเคราะห์ตามความจุแบตเตอรี่</p>
+                <CardTitle className="text-base font-black text-primary">สรุปการเดินทาง (EPA)</CardTitle>
+                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">วิเคราะห์ความปลอดภัยในการขับขี่จริง</p>
               </div>
             </CardHeader>
             <CardContent className="p-6 space-y-6">
@@ -632,7 +635,7 @@ function MapView({
                       </div>
                       <div>
                         <p className="text-sm font-black text-secondary">ต้องแวะชาร์จ {plannedStops.length} ครั้ง</p>
-                        <p className="text-[11px] font-bold text-muted-foreground">รัศมีสถานีที่แนะนำ 10 กม.</p>
+                        <p className="text-[11px] font-bold text-muted-foreground">รัศมี 10 กม. รอบจุดแบตต่ำ</p>
                       </div>
                     </div>
                     
@@ -654,7 +657,6 @@ function MapView({
                     )}
                   </div>
 
-                  {/* List of stations found */}
                   {stations.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">สถานีเครือข่ายที่พบ ({stations.length})</p>
