@@ -28,17 +28,23 @@ import {
   Car,
   Settings,
   LocateFixed,
-  ExternalLink,
   Map as MapIcon,
-  Search
+  Search,
+  AlertTriangle
 } from 'lucide-react';
 import { CHARGING_NETWORKS, ATTO3_RANGE_KM, SAFETY_MARGIN_PERCENT } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
-const GOOGLE_MAPS_API_KEY = "AIzaSyBkAJkrsoawc920PII-0fyiz40tHHH8Hnk";
+// It is recommended to use environment variables for API keys
+// Create a .env.local file and add NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_api_key
+const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PII-0fyiz40tHHH8Hnk";
 
 export default function ChargeWayApp() {
   const [tripData, setTripData] = useState<any>(null);
+
+  if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === "AIzaSyBkAJkrsoawc920PII-0fyiz40tHHH8Hnk") {
+    console.warn("ChargeWay: Google Maps API Key is missing or using a placeholder. Please set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.");
+  }
 
   return (
     <APIProvider apiKey={GOOGLE_MAPS_API_KEY}>
@@ -57,13 +63,24 @@ export default function ChargeWayApp() {
                 </div>
               </div>
               <Badge variant="outline" className="rounded-full bg-secondary/5 text-secondary border-secondary/20 font-bold px-3">
-                v1.2.0
+                v1.2.1
               </Badge>
             </div>
           </header>
 
           <ScrollArea className="flex-1">
             <main className="p-6 space-y-8">
+              {!process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY && (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex gap-3 items-start">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-xs font-bold text-amber-800">API Key Required</p>
+                    <p className="text-[10px] text-amber-700 leading-relaxed">
+                      Please set <code className="bg-amber-100 px-1 rounded">NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code> in your environment settings to enable all features.
+                    </p>
+                  </div>
+                </div>
+              )}
               <TripForm onPlanTrip={setTripData} />
               {tripData && <RouteSummary tripData={tripData} />}
             </main>
@@ -248,7 +265,6 @@ function TripForm({ onPlanTrip }: { onPlanTrip: (data: any) => void }) {
 }
 
 function RouteSummary({ tripData }: { tripData: any }) {
-  // This component will be populated via signals from MapView
   return (
     <div id="route-summary-target" className="space-y-4 pt-4 border-t border-border/40" />
   );
@@ -284,7 +300,6 @@ function MapView({ tripData }: { tripData: any }) {
     if (!placesLib || !map) return;
     const service = new google.maps.places.PlacesService(map);
     
-    // Generic fallback if no networks selected
     const queries = networkQueries.length > 0 ? networkQueries : ['EV Charging Station Thailand'];
 
     queries.forEach(query => {
@@ -338,9 +353,7 @@ function MapView({ tripData }: { tripData: any }) {
         const safetyBufferKm = (SAFETY_MARGIN_PERCENT / 100) * ATTO3_RANGE_KM;
         const usableRangeKm = initialRangeKm - safetyBufferKm;
 
-        // If distance is longer than our range, we need to find stops
         if (distanceKm > usableRangeKm) {
-          // Identify charging zone (at 85% of usable range to give buffer)
           const targetKm = usableRangeKm * 0.85;
           let cumulativeDistance = 0;
           let stopLocation = route.end_location;
@@ -396,7 +409,6 @@ function MapView({ tripData }: { tripData: any }) {
       const lng = selectedStation.geometry.location.lng();
       url += `&waypoints=${lat},${lng}`;
     } else if (plannedStops.length > 0) {
-      // Use the first stop if no station selected but stop is required
       const waypoints = plannedStops.map(s => `${s.location.lat()},${s.location.lng()}`).join('|');
       url += `&waypoints=${encodeURIComponent(waypoints)}`;
     }
