@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -18,6 +19,7 @@ import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useToast } from "@/hooks/use-toast";
 import { 
   Battery, 
   MapPin, 
@@ -35,7 +37,8 @@ import {
   AlertCircle,
   Star,
   ArrowRight,
-  Loader2
+  Loader2,
+  GripVertical
 } from 'lucide-react';
 import { CHARGING_NETWORKS } from '@/lib/constants';
 import { cn } from '@/lib/utils';
@@ -124,10 +127,13 @@ function TripForm({
   const [fullRange, setFullRange] = useState(410);
   const [minBatteryThreshold, setMinBatteryThreshold] = useState(15);
   const [selectedNetworks, setSelectedNetworks] = useState<string[]>(CHARGING_NETWORKS.map(n => n.id));
+  const [isLocating, setIsLocating] = useState(false);
   
   const originInputRef = useRef<HTMLInputElement>(null);
   const destinationInputRef = useRef<HTMLInputElement>(null);
   const placesLib = useMapsLibrary('places');
+  const geocodingLib = useMapsLibrary('geocoding');
+  const { toast } = useToast();
 
   // EPA Usable range calculation
   const actualEpaRange = Math.round(fullRange * EPA_FACTOR);
@@ -163,6 +169,58 @@ function TripForm({
       if (place.formatted_address) setDestination(place.formatted_address);
     });
   }, [placesLib]);
+
+  const handleUseMyLocation = () => {
+    if (!navigator.geolocation) {
+      toast({
+        variant: "destructive",
+        title: "Geolocation not supported",
+        description: "เบราว์เซอร์ของคุณไม่รองรับการดึงตำแหน่งปัจจุบัน"
+      });
+      return;
+    }
+
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        if (!geocodingLib) {
+          setIsLocating(false);
+          return;
+        }
+
+        const geocoder = new geocodingLib.Geocoder();
+        geocoder.geocode({ location: { lat: latitude, lng: longitude } }, (results, status) => {
+          setIsLocating(false);
+          if (status === 'OK' && results && results[0]) {
+            setOrigin(results[0].formatted_address);
+            toast({
+              title: "ดึงตำแหน่งสำเร็จ",
+              description: `ระบุตำแหน่งปัจจุบันเป็นจุดเริ่มต้นเรียบร้อยแล้ว`
+            });
+          } else {
+            toast({
+              variant: "destructive",
+              title: "Geocoding Failed",
+              description: "ไม่สามารถแปลงพิกัดเป็นที่อยู่ได้"
+            });
+          }
+        });
+      },
+      (error) => {
+        setIsLocating(false);
+        let msg = "ไม่สามารถเข้าถึงตำแหน่งของคุณได้";
+        if (error.code === error.PERMISSION_DENIED) msg = "กรุณาอนุญาตการเข้าถึงตำแหน่ง (Location Permission) ในเบราว์เซอร์";
+        
+        toast({
+          variant: "destructive",
+          title: "Location Access Denied",
+          description: msg
+        });
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
 
   const toggleNetwork = (id: string) => {
     setSelectedNetworks(prev => 
@@ -203,18 +261,33 @@ function TripForm({
                 className="pl-11 h-13 rounded-2xl border-border/80 focus:ring-primary/20 bg-background/50 text-sm font-medium transition-all"
               />
             </div>
-            <Button
-              variant={isPickingOnMap === 'origin' ? 'default' : 'outline'}
-              size="icon"
-              className={cn(
-                "h-13 w-13 rounded-2xl shrink-0 transition-all",
-                isPickingOnMap === 'origin' && "animate-pulse"
-              )}
-              onClick={() => setIsPickingOnMap(isPickingOnMap === 'origin' ? null : 'origin')}
-              title="เลือกบนแผนที่"
-            >
-              <Crosshair className="w-5 h-5" />
-            </Button>
+            <div className="flex gap-1.5 shrink-0">
+              <Button
+                variant="outline"
+                size="icon"
+                disabled={isLocating}
+                className={cn(
+                  "h-13 w-13 rounded-2xl transition-all border-border/80",
+                  isLocating && "animate-pulse"
+                )}
+                onClick={handleUseMyLocation}
+                title="ใช้ตำแหน่งปัจจุบัน"
+              >
+                {isLocating ? <Loader2 className="w-5 h-5 animate-spin" /> : <LocateFixed className="w-5 h-5 text-primary" />}
+              </Button>
+              <Button
+                variant={isPickingOnMap === 'origin' ? 'default' : 'outline'}
+                size="icon"
+                className={cn(
+                  "h-13 w-13 rounded-2xl transition-all border-border/80",
+                  isPickingOnMap === 'origin' && "animate-pulse"
+                )}
+                onClick={() => setIsPickingOnMap(isPickingOnMap === 'origin' ? null : 'origin')}
+                title="เลือกบนแผนที่"
+              >
+                <Crosshair className="w-5 h-5" />
+              </Button>
+            </div>
           </div>
 
           <div className="flex items-center gap-2 group">
@@ -234,7 +307,7 @@ function TripForm({
               variant={isPickingOnMap === 'destination' ? 'default' : 'outline'}
               size="icon"
               className={cn(
-                "h-13 w-13 rounded-2xl shrink-0 transition-all",
+                "h-13 w-13 rounded-2xl shrink-0 transition-all border-border/80",
                 isPickingOnMap === 'destination' && "animate-pulse"
               )}
               onClick={() => setIsPickingOnMap(isPickingOnMap === 'destination' ? null : 'destination')}
@@ -400,10 +473,9 @@ function MapView({
     
     const service = new google.maps.places.PlacesService(map);
     return new Promise<any[]>((resolve) => {
-      // Broad Nearby Search as requested
       service.nearbySearch({
         location,
-        radius: 20000, // 20km radius
+        radius: 20000, // 20km radius as requested
         keyword: "PTT EV ปตท EV PEA VOLTA VOLTA ELEXA SPARK EV Charging Station",
         type: 'car_charging_station'
       }, (results, status) => {
@@ -422,7 +494,7 @@ function MapView({
     
     const calculateRoute = async () => {
       setIsLoading(true);
-      const { origin, destination, fullRange, minBatteryThreshold, selectedNetworks } = tripData;
+      const { origin, destination, fullRange, minBatteryThreshold } = tripData;
       const directionsService = new google.maps.DirectionsService();
       
       try {
@@ -446,14 +518,14 @@ function MapView({
         setPlannedStops([]);
         setSelectedStation(null);
 
-        // EPA Calculations
+        // EPA Calculation: (Full Range * 0.85) * (1 - Threshold/100)
         const actualEpaRange = fullRange * EPA_FACTOR;
         const usableRangePerCharge = actualEpaRange * (1 - minBatteryThreshold / 100);
 
         const stops: any[] = [];
         const allFoundStations: any[] = [];
         
-        // Precise segment-based stop calculation using overview_path
+        // Accurate path tracking using overview_path
         const path = result.routes[0].overview_path;
         let currentSegmentDist = 0;
         let cumulativeDist = 0;
@@ -466,6 +538,7 @@ function MapView({
           currentSegmentDist += d;
           cumulativeDist += d;
 
+          // If current segment exceeds usable range, plan a stop
           if (currentSegmentDist >= usableRangePerCharge) {
             const stopLoc = p2;
             stops.push({
@@ -475,11 +548,11 @@ function MapView({
             
             const found = await searchStationsAtLocation(stopLoc);
             allFoundStations.push(...found);
-            currentSegmentDist = 0; 
+            currentSegmentDist = 0; // Reset segment distance for next stop
           }
         }
 
-        // De-duplicate by place_id using window.Map to avoid collision with Map component
+        // De-duplicate stations by place_id
         const uniqueMap = new window.Map();
         allFoundStations.forEach(res => {
           if (res.place_id) uniqueMap.set(res.place_id, res);
@@ -487,7 +560,6 @@ function MapView({
         
         const finalStationsList = Array.from(uniqueMap.values());
         
-        // Show all results without filtering as requested in point 4
         setStations(finalStationsList);
         setPlannedStops(stops);
         
