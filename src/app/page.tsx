@@ -35,7 +35,8 @@ import {
   Target,
   AlertCircle,
   Star,
-  ArrowRight
+  ArrowRight,
+  Loader2
 } from 'lucide-react';
 import { CHARGING_NETWORKS } from '@/lib/constants';
 import { cn } from '@/lib/utils';
@@ -305,7 +306,7 @@ function TripForm({
                 <span className="text-[10px] font-bold text-muted-foreground italic">/ ชาร์จ</span>
              </div>
           </div>
-          <p className="text-[10px] text-muted-foreground italic text-right opacity-70">* คำนวณที่ 85% ของสเปคโรงงานเพื่อความปลอดภัยในการเดินทางจริง</p>
+          <p className="text-[10px] text-muted-foreground italic text-right opacity-70">* คำนวณที่ 85% ของสเปคโรงงานเพื่อให้สอดคล้องกับการขับขี่จริง</p>
         </div>
       </section>
 
@@ -481,11 +482,12 @@ function MapView({
         const allFoundStations: any[] = [];
 
         if (totalDistanceKm > usableRangeKm) {
-          // Identify stops
+          // Identify stops along the route path
           for (const step of route.steps) {
             const stepDist = (step.distance?.value || 0) / 1000;
             currentSegmentDist += stepDist;
 
+            // When we exceed the usable range, we need to find a station
             if (currentSegmentDist >= usableRangeKm) {
               const stopLoc = step.end_location;
               stops.push({
@@ -493,7 +495,7 @@ function MapView({
                 title: `จุดชาร์จที่ ${stops.length + 1}`
               });
               
-              // Search stations for this specific stop
+              // Search stations for this specific stop (10km radius)
               const foundStations = await searchStationsAtLocation(stopLoc, networkQueries);
               allFoundStations.push(...foundStations);
               
@@ -742,8 +744,8 @@ function MapView({
       {isLoading && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/20 backdrop-blur-sm">
            <div className="flex flex-col items-center gap-4 bg-white p-8 rounded-[2.5rem] shadow-2xl border border-primary/10">
-              <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-              <p className="text-sm font-black text-primary uppercase tracking-[0.2em]">กำลังวิเคราะห์สถานีชาร์จ 10 กม...</p>
+              <Loader2 className="w-12 h-12 text-primary animate-spin" />
+              <p className="text-sm font-black text-primary uppercase tracking-[0.2em]">กำลังวิเคราะห์สถานีชาร์จในรัศมี 10 กม...</p>
            </div>
         </div>
       )}
