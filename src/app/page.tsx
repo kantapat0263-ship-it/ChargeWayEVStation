@@ -405,28 +405,39 @@ function MapView({
     });
   }, [isPickingOnMap, geocodingLib, setIsPickingOnMap]);
 
-  const searchStationsAtLocation = useCallback((location: google.maps.LatLng, networkQueries: string[]) => {
-    if (!placesLib || !map) return;
-    const service = new google.maps.places.PlacesService(map);
+  const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng, networkQueries: string[]) => {
+    if (!placesLib || !map) return [];
     
+    const service = new google.maps.places.PlacesService(map);
     const queriesToRun = networkQueries.length > 0 ? networkQueries : ['EV Charging Station'];
 
-    queriesToRun.forEach(query => {
-      service.nearbySearch({
-        location,
-        radius: 10000, // 10km radius
-        keyword: query,
-        type: 'car_charging_station'
-      }, (results, status) => {
-        if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-          setStations(prev => {
-            const existingIds = new Set(prev.map(s => s.place_id));
-            const newStations = results.filter(r => r.place_id && !existingIds.has(r.place_id));
-            return [...prev, ...newStations];
-          });
-        }
+    const searchPromises = queriesToRun.map(query => {
+      return new Promise<any[]>((resolve) => {
+        service.nearbySearch({
+          location,
+          radius: 10000, // 10km radius
+          keyword: query,
+          type: 'car_charging_station'
+        }, (results, status) => {
+          if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+            resolve(results);
+          } else {
+            resolve([]);
+          }
+        });
       });
     });
+
+    const resultsArray = await Promise.all(searchPromises);
+    const flatResults = resultsArray.flat();
+    
+    // De-duplicate by place_id
+    const uniqueMap = new Map();
+    flatResults.forEach(res => {
+      if (res.place_id) uniqueMap.set(res.place_id, res);
+    });
+    
+    return Array.from(uniqueMap.values());
   }, [placesLib, map]);
 
   useEffect(() => {
@@ -467,9 +478,11 @@ function MapView({
         ).filter(Boolean);
 
         let currentSegmentDist = 0;
+        const allFoundStations: any[] = [];
 
         if (totalDistanceKm > usableRangeKm) {
-          route.steps.forEach(step => {
+          // Identify stops
+          for (const step of route.steps) {
             const stepDist = (step.distance?.value || 0) / 1000;
             currentSegmentDist += stepDist;
 
@@ -480,19 +493,30 @@ function MapView({
                 title: `จุดชาร์จที่ ${stops.length + 1}`
               });
               
-              searchStationsAtLocation(stopLoc, networkQueries);
-              currentSegmentDist = 0; 
+              // Search stations for this specific stop
+              const foundStations = await searchStationsAtLocation(stopLoc, networkQueries);
+              allFoundStations.push(...foundStations);
+              
+              currentSegmentDist = 0; // Reset segment distance for next charge leg
             }
-          });
+          }
         }
 
+        // De-duplicate final stations across all stops
+        const finalUniqueStationsMap = new Map();
+        allFoundStations.forEach(s => finalUniqueStationsMap.set(s.place_id, s));
+        
+        setStations(Array.from(finalUniqueStationsMap.values()));
         setPlannedStops(stops);
         
         const bounds = new google.maps.LatLngBounds();
         bounds.extend(route.start_location);
         bounds.extend(route.end_location);
         stops.forEach(s => bounds.extend(s.location));
-        map?.fitBounds(bounds, { padding: 100 });
+        // Also extend to include found stations
+        Array.from(finalUniqueStationsMap.values()).forEach(s => bounds.extend(s.geometry.location));
+        
+        map?.fitBounds(bounds, { padding: 80 });
 
       } catch (err) {
         console.error("Route planning failed", err);
