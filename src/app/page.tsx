@@ -40,7 +40,7 @@ import {
   Loader2,
   GripVertical
 } from 'lucide-react';
-import { CHARGING_NETWORKS } from '@/lib/constants';
+import { CHARGING_NETWORKS, DEFAULT_SEARCH_KEYWORDS } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PIl-0fyiz40tHHH8Hnk";
@@ -431,43 +431,67 @@ function MapView({
     });
   }, [isPickingOnMap, geocodingLib, setIsPickingOnMap]);
 
-  // Unified Filtering Logic
-  const filterStations = useCallback((rawStations: any[], networks: string[]) => {
-    if (networks.length === 0) return rawStations;
-    
-    return rawStations.filter(station => {
-      const name = (station.name || "").toUpperCase();
-      return networks.some(netId => {
-        if (netId === 'ptt') return name.includes("PTT") || name.includes("ปตท");
-        if (netId === 'pea') return name.includes("PEA") || name.includes("VOLTA") || name.includes("โวลต้า");
-        if (netId === 'elexa') return name.includes("ELEXA");
-        if (netId === 'spark') return name.includes("SPARK");
-        return false;
-      });
-    });
-  }, []);
-
+  // Combined Searching & Filtering Logic
   const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng, networks: string[]) => {
     if (!placesLib || !map) return [];
     
     const service = new google.maps.places.PlacesService(map);
-    return new Promise<any[]>((resolve) => {
-      service.nearbySearch({
-        location,
-        radius: 20000, // 20km radius as requested
-        keyword: "PTT EV ปตท EV PEA VOLTA VOLTA ELEXA SPARK EV Charging Station",
-        type: 'car_charging_station'
-      }, (results, status) => {
-        if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-          // Limit to maxResultCount = 10 as requested
-          const filtered = filterStations(results.slice(0, 10), networks);
-          resolve(filtered);
-        } else {
-          resolve([]);
-        }
+    const searchKeywords: string[] = [];
+
+    if (networks.length > 0) {
+      networks.forEach(netId => {
+        const net = CHARGING_NETWORKS.find(n => n.id === netId);
+        if (net) searchKeywords.push(...net.queries);
+      });
+    } else {
+      searchKeywords.push(...DEFAULT_SEARCH_KEYWORDS);
+    }
+
+    const allResults: any[] = [];
+
+    // Perform multiple searches for better coverage (Concurrent)
+    const searchPromises = searchKeywords.map(keyword => {
+      return new Promise<any[]>((resolve) => {
+        service.nearbySearch({
+          location,
+          radius: 20000, // 20km radius as requested
+          keyword,
+          type: 'car_charging_station'
+        }, (results, status) => {
+          if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+            resolve(results);
+          } else {
+            resolve([]);
+          }
+        });
       });
     });
-  }, [placesLib, map, filterStations]);
+
+    const resultsArray = await Promise.all(searchPromises);
+    resultsArray.forEach(res => allResults.push(...res));
+
+    // De-duplicate by place_id using window.Map
+    const uniqueMap = new window.Map();
+    allResults.forEach(res => {
+      if (res.place_id) uniqueMap.set(res.place_id, res);
+    });
+
+    const uniqueResults = Array.from(uniqueMap.values());
+
+    // Apply strict filtering only if networks are selected
+    if (networks.length > 0) {
+      return uniqueResults.filter(station => {
+        const name = (station.name || "").toUpperCase();
+        return networks.some(netId => {
+          const net = CHARGING_NETWORKS.find(n => n.id === netId);
+          if (!net) return false;
+          return net.brandMatch.some(match => name.includes(match.toUpperCase()));
+        });
+      });
+    }
+
+    return uniqueResults;
+  }, [placesLib, map]);
 
   useEffect(() => {
     if (!tripData || !routesLib || !directionsRenderer || !map) return;
@@ -497,7 +521,7 @@ function MapView({
         setPlannedStops([]);
         setSelectedStation(null);
 
-        // EPA Segment-based calculation
+        // Segment-based EPA calculation logic
         const actualEpaRange = fullRange * EPA_FACTOR;
         const usableRangePerCharge = actualEpaRange * (1 - minBatteryThreshold / 100);
 
@@ -508,27 +532,29 @@ function MapView({
         let currentSegmentDist = 0;
         let cumulativeDist = 0;
 
+        // Path tracking for precision stops
         for (let i = 0; i < path.length - 1; i++) {
           const d = google.maps.geometry.spherical.computeDistanceBetween(path[i], path[i+1]) / 1000;
           currentSegmentDist += d;
           cumulativeDist += d;
 
+          // If current battery reach usable range limit, find station
           if (currentSegmentDist >= usableRangePerCharge) {
             const stopLoc = path[i+1];
             stops.push({ location: stopLoc, atKm: Math.round(cumulativeDist) });
             const found = await searchStationsAtLocation(stopLoc, selectedNetworks);
             allFoundStations.push(...found);
-            currentSegmentDist = 0; // Reset segment distance for next stop
+            currentSegmentDist = 0; // Reset for next segment
           }
         }
 
-        // De-duplicate by place_id using window.Map to avoid component name conflict
-        const uniqueMap = new window.Map();
+        // De-duplicate final aggregated results
+        const finalUniqueMap = new window.Map();
         allFoundStations.forEach(res => {
-          if (res.place_id) uniqueMap.set(res.place_id, res);
+          if (res.place_id) finalUniqueMap.set(res.place_id, res);
         });
         
-        setStations(Array.from(uniqueMap.values()));
+        setStations(Array.from(finalUniqueMap.values()));
         setPlannedStops(stops);
         
         const bounds = new google.maps.LatLngBounds();
