@@ -62,7 +62,7 @@ export default function ChargeWayApp() {
                 </div>
               </div>
               <Badge variant="outline" className="rounded-full bg-secondary/5 text-secondary border-secondary/20 font-bold px-3">
-                Multi-Stop v3.1
+                Multi-Stop v3.2
               </Badge>
             </div>
           </header>
@@ -118,7 +118,6 @@ function TripForm({
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
   const [fullRange, setFullRange] = useState(400);
-  const [currentBattery, setCurrentBattery] = useState(80);
   const [minBatteryThreshold, setMinBatteryThreshold] = useState(20);
   const [selectedNetworks, setSelectedNetworks] = useState<string[]>([]);
   
@@ -169,7 +168,6 @@ function TripForm({
       origin, 
       destination, 
       fullRange,
-      currentBattery, 
       minBatteryThreshold, 
       selectedNetworks 
     });
@@ -263,25 +261,6 @@ function TripForm({
             onValueChange={v => setFullRange(v[0])} 
             max={1000} 
             step={10}
-            className="py-1 cursor-pointer"
-          />
-        </div>
-
-        <div className="space-y-5 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
-          <div className="flex justify-between items-center">
-            <Label className="flex items-center gap-2.5 text-sm font-bold text-foreground/80">
-              <div className="p-1.5 bg-green-100 rounded-lg text-green-600">
-                <Battery className="w-4 h-4" />
-              </div> 
-              แบตเตอรี่ปัจจุบัน
-            </Label>
-            <span className="text-sm font-black text-green-600 bg-green-50 px-3 py-1 rounded-xl tabular-nums">{currentBattery}%</span>
-          </div>
-          <Slider 
-            value={[currentBattery]} 
-            onValueChange={v => setCurrentBattery(v[0])} 
-            max={100} 
-            step={1}
             className="py-1 cursor-pointer"
           />
         </div>
@@ -433,7 +412,7 @@ function MapView({
     
     const calculateRoute = async () => {
       setIsLoading(true);
-      const { origin, destination, fullRange, currentBattery, minBatteryThreshold, selectedNetworks } = tripData;
+      const { origin, destination, fullRange, minBatteryThreshold, selectedNetworks } = tripData;
       const directionsService = new google.maps.DirectionsService();
       
       try {
@@ -458,9 +437,8 @@ function MapView({
         setSelectedStation(null);
 
         // Distance thresholds
-        const initialRangeKm = (currentBattery / 100) * fullRange;
+        // Assuming trip starts with 100% battery based on user request to remove current battery input
         const thresholdKm = (minBatteryThreshold / 100) * fullRange;
-        const usableInitialKm = Math.max(0, initialRangeKm - thresholdKm);
         const usableFullKm = Math.max(0, fullRange - thresholdKm);
 
         const stops: any[] = [];
@@ -469,9 +447,9 @@ function MapView({
         ).filter(Boolean);
 
         let cumulativeDist = 0;
-        let nextTargetDist = usableInitialKm;
+        let nextTargetDist = usableFullKm;
 
-        if (totalDistanceKm > usableInitialKm) {
+        if (totalDistanceKm > usableFullKm) {
           route.steps.forEach(step => {
             const stepDist = (step.distance?.value || 0) / 1000;
             const newCumulativeDist = cumulativeDist + stepDist;
