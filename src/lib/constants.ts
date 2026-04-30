@@ -10,7 +10,7 @@ export interface ChargingNetwork {
 }
 
 export const CHARGING_NETWORKS: ChargingNetwork[] = [
-  { id: 'ptt', name: 'PTT EV STATION', color: '#004A99', query: 'EV Station Pluz PTT', brandMatch: 'pluz' },
+  { id: 'ptt', name: 'PTT EV STATION', color: '#004A99', query: 'EV Station Pluz PTT', brandMatch: 'ptt' },
   { id: 'pea', name: 'PEA VOLTA', color: '#7B2CBF', query: 'PEA Volta', brandMatch: 'volta' },
   { id: 'elexa', name: 'ELEXA', color: '#00BFA5', query: 'Elexa EGAT', brandMatch: 'elexa' },
   { id: 'spark', name: 'SPARK EV', color: '#E31937', query: 'Spark EV', brandMatch: 'spark' },
