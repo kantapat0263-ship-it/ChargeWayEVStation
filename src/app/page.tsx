@@ -486,6 +486,7 @@ function MapView({
         ).filter(Boolean);
 
         let currentSegmentDist = 0;
+        let cumulativeDist = 0;
         const allFoundStations: any[] = [];
 
         if (totalDistanceKm > usableRangeKm) {
@@ -493,13 +494,15 @@ function MapView({
           for (const step of route.steps) {
             const stepDist = (step.distance?.value || 0) / 1000;
             currentSegmentDist += stepDist;
+            cumulativeDist += stepDist;
 
             // When we exceed the usable range, we need to find a station
             if (currentSegmentDist >= usableRangeKm) {
               const stopLoc = step.end_location;
               stops.push({
                 location: stopLoc,
-                title: `จุดชาร์จที่ ${stops.length + 1}`
+                title: `จุดชาร์จที่ ${stops.length + 1}`,
+                atKm: Math.round(cumulativeDist)
               });
               
               // Search stations for this specific stop (10km radius)
@@ -580,7 +583,7 @@ function MapView({
           >
              <div className="bg-secondary text-white px-3 py-1.5 rounded-2xl shadow-2xl border-2 border-white flex flex-col items-center animate-bounce z-10">
                 <Zap className="w-4 h-4 fill-white" />
-                <span className="text-[9px] font-black uppercase tracking-wider">จุดแวะที่ {i+1}</span>
+                <span className="text-[9px] font-black uppercase tracking-wider">จุดแวะที่ {i+1} ({stop.atKm} กม.)</span>
              </div>
           </AdvancedMarker>
         ))}
