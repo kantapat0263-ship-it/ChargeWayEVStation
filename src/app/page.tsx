@@ -123,7 +123,8 @@ function TripForm({
   const [destination, setDestination] = useState("");
   const [fullRange, setFullRange] = useState(400);
   const [minBatteryThreshold, setMinBatteryThreshold] = useState(20);
-  const [selectedNetworks, setSelectedNetworks] = useState<string[]>([]);
+  // Default to selecting all available networks (PTT, PEA, ELEXA, SPARK)
+  const [selectedNetworks, setSelectedNetworks] = useState<string[]>(CHARGING_NETWORKS.map(n => n.id));
   
   const originInputRef = useRef<HTMLInputElement>(null);
   const destinationInputRef = useRef<HTMLInputElement>(null);
@@ -330,14 +331,6 @@ function TripForm({
               {network.name}
             </button>
           ))}
-          {selectedNetworks.length > 0 && (
-            <button 
-              onClick={() => setSelectedNetworks([])}
-              className="text-[10px] text-destructive font-black uppercase tracking-widest px-2 hover:underline"
-            >
-              รีเซ็ต
-            </button>
-          )}
         </div>
       </section>
 
@@ -420,7 +413,7 @@ function MapView({
           type: 'car_charging_station'
         }, (results, status) => {
           if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-            // Strict filtering by name if networkQueries are provided
+            // Strict filtering by name
             if (networkQueries.length > 0) {
               const filtered = results.filter(place => 
                 networkQueries.some(q => place.name?.toLowerCase().includes(q.toLowerCase()))
@@ -439,7 +432,7 @@ function MapView({
     const resultsArray = await Promise.all(searchPromises);
     const flatResults = resultsArray.flat();
     
-    // De-duplicate by place_id. Use window.Map to avoid collision with React Map component
+    // De-duplicate by place_id
     const uniqueMap = new window.Map();
     flatResults.forEach(res => {
       if (res.place_id) uniqueMap.set(res.place_id, res);
@@ -525,7 +518,6 @@ function MapView({
         bounds.extend(route.start_location);
         bounds.extend(route.end_location);
         stops.forEach(s => bounds.extend(s.location));
-        // Also extend to include found stations
         Array.from(finalUniqueStationsMap.values()).forEach(s => bounds.extend(s.geometry.location));
         
         map?.fitBounds(bounds, { padding: 80 });
