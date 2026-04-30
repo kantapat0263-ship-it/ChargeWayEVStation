@@ -91,7 +91,7 @@ export default function ChargeWayApp() {
         <div className="flex-1 relative h-[60vh] lg:h-full bg-slate-50">
           <MapView 
             tripData={tripData} 
-            isPickingOnMap={isPickingOnMap}
+            isPickingOnMap={isPickingOnMap} 
             setIsPickingOnMap={setIsPickingOnMap}
           />
           {isPickingOnMap && (
@@ -123,7 +123,7 @@ function TripForm({
   const [destination, setDestination] = useState("");
   const [fullRange, setFullRange] = useState(400);
   const [minBatteryThreshold, setMinBatteryThreshold] = useState(20);
-  // Default to selecting all available networks (PTT, PEA, ELEXA, SPARK)
+  // Default to selecting all available networks
   const [selectedNetworks, setSelectedNetworks] = useState<string[]>(CHARGING_NETWORKS.map(n => n.id));
   
   const originInputRef = useRef<HTMLInputElement>(null);
@@ -398,32 +398,44 @@ function MapView({
     });
   }, [isPickingOnMap, geocodingLib, setIsPickingOnMap]);
 
-  const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng, networkQueries: string[]) => {
+  const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng, networksToSearch: any[]) => {
     if (!placesLib || !map) return [];
     
     const service = new google.maps.places.PlacesService(map);
-    const queriesToRun = networkQueries.length > 0 ? networkQueries : ['EV Charging Station'];
-
-    const searchPromises = queriesToRun.map(query => {
+    const searchPromises = networksToSearch.map(network => {
       return new Promise<any[]>((resolve) => {
+        // Use a broad search with both type and keyword for Thailand data
         service.nearbySearch({
           location,
           radius: 10000, // 10km radius
-          keyword: query,
+          keyword: network.query,
           type: 'car_charging_station'
         }, (results, status) => {
           if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-            // Strict filtering by name
-            if (networkQueries.length > 0) {
-              const filtered = results.filter(place => 
-                networkQueries.some(q => place.name?.toLowerCase().includes(q.toLowerCase()))
-              );
-              resolve(filtered);
-            } else {
-              resolve(results);
-            }
+            // Flexible filtering: check if the brand name or match tag is in the result name
+            const filtered = results.filter(place => {
+              const name = place.name?.toLowerCase() || "";
+              const matchTag = network.brandMatch.toLowerCase();
+              return name.includes(matchTag);
+            });
+            resolve(filtered);
           } else {
-            resolve([]);
+            // If nothing found with type, try without type restriction for better coverage
+            service.nearbySearch({
+              location,
+              radius: 10000,
+              keyword: network.query
+            }, (res, stat) => {
+              if (stat === google.maps.places.PlacesServiceStatus.OK && res) {
+                const filt = res.filter(p => {
+                   const n = p.name?.toLowerCase() || "";
+                   return n.includes(network.brandMatch.toLowerCase());
+                });
+                resolve(filt);
+              } else {
+                resolve([]);
+              }
+            });
           }
         });
       });
@@ -432,7 +444,7 @@ function MapView({
     const resultsArray = await Promise.all(searchPromises);
     const flatResults = resultsArray.flat();
     
-    // De-duplicate by place_id
+    // De-duplicate by place_id using window.Map to avoid conflict with Component Map
     const uniqueMap = new window.Map();
     flatResults.forEach(res => {
       if (res.place_id) uniqueMap.set(res.place_id, res);
@@ -470,20 +482,18 @@ function MapView({
         setPlannedStops([]);
         setSelectedStation(null);
 
-        // Calculate thresholds using EPA Adjustment
+        // Calculate thresholds using EPA Adjustment (85%)
         const usableRangeKm = fullRange * (1 - minBatteryThreshold / 100) * EPA_FACTOR;
 
         const stops: any[] = [];
-        const networkQueries = selectedNetworks.map((id: string) => 
-          CHARGING_NETWORKS.find(n => n.id === id)?.query || ""
-        ).filter(Boolean);
+        const activeNetworks = CHARGING_NETWORKS.filter(n => selectedNetworks.includes(n.id));
 
         let currentSegmentDist = 0;
         let cumulativeDist = 0;
         const allFoundStations: any[] = [];
 
         if (totalDistanceKm > usableRangeKm) {
-          // Identify stops along the route path
+          // Identify stops along the route path precisely using route steps
           for (const step of route.steps) {
             const stepDist = (step.distance?.value || 0) / 1000;
             currentSegmentDist += stepDist;
@@ -499,7 +509,7 @@ function MapView({
               });
               
               // Search stations for this specific stop (10km radius)
-              const foundStations = await searchStationsAtLocation(stopLoc, networkQueries);
+              const foundStations = await searchStationsAtLocation(stopLoc, activeNetworks);
               allFoundStations.push(...foundStations);
               
               currentSegmentDist = 0; // Reset segment distance for next charge leg
@@ -511,14 +521,16 @@ function MapView({
         const finalUniqueStationsMap = new window.Map();
         allFoundStations.forEach(s => finalUniqueStationsMap.set(s.place_id, s));
         
-        setStations(Array.from(finalUniqueStationsMap.values()));
+        const finalStationsList = Array.from(finalUniqueStationsMap.values());
+        setStations(finalStationsList);
         setPlannedStops(stops);
         
+        // Adjust map bounds to show everything
         const bounds = new google.maps.LatLngBounds();
         bounds.extend(route.start_location);
         bounds.extend(route.end_location);
         stops.forEach(s => bounds.extend(s.location));
-        Array.from(finalUniqueStationsMap.values()).forEach(s => bounds.extend(s.geometry.location));
+        finalStationsList.forEach(s => bounds.extend(s.geometry.location));
         
         map?.fitBounds(bounds, { padding: 80 });
 
@@ -663,7 +675,7 @@ function MapView({
                       </div>
                       <div>
                         <p className="text-sm font-black text-secondary">ต้องแวะชาร์จ {plannedStops.length} ครั้ง</p>
-                        <p className="text-[11px] font-bold text-muted-foreground">รัศมี 10 กม. รอบจุดแบตต่ำ</p>
+                        <p className="text-[11px] font-bold text-muted-foreground">รัศมี 10 กม. รอบทุกจุดที่แบตเริ่มต่ำ</p>
                       </div>
                     </div>
                     
@@ -680,15 +692,15 @@ function MapView({
                     ) : (
                       <div className="flex items-center justify-center p-3 rounded-xl bg-white/50 border border-secondary/20">
                         <AlertCircle className="w-3.5 h-3.5 text-secondary mr-2" />
-                        <p className="text-[10px] font-black text-secondary uppercase tracking-widest">กรุณาเลือกสถานีบนแผนที่</p>
+                        <p className="text-[10px] font-black text-secondary uppercase tracking-widest">เลือกสถานีบนแผนที่หรือรายการด้านล่าง</p>
                       </div>
                     )}
                   </div>
 
                   {stations.length > 0 && (
                     <div className="space-y-2">
-                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">สถานีเครือข่ายที่พบ ({stations.length})</p>
-                      <ScrollArea className="h-[180px] rounded-2xl border border-border/50 p-2">
+                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">เครือข่ายที่คุณชอบในรัศมี 10 กม. ({stations.length})</p>
+                      <ScrollArea className="h-[200px] rounded-2xl border border-border/50 p-2">
                         <div className="space-y-2">
                           {stations.map((s, idx) => (
                             <button
@@ -696,12 +708,12 @@ function MapView({
                               onClick={() => {
                                 setSelectedStation(s);
                                 map?.panTo(s.geometry.location);
-                                map?.setZoom(15);
+                                map?.setZoom(16);
                               }}
                               className={cn(
                                 "w-full text-left p-3 rounded-xl transition-all border",
                                 selectedStation?.place_id === s.place_id 
-                                  ? "bg-primary/5 border-primary/20" 
+                                  ? "bg-primary/5 border-primary/20 shadow-sm" 
                                   : "bg-white border-transparent hover:bg-muted/30"
                               )}
                             >
@@ -724,7 +736,7 @@ function MapView({
                   </div>
                   <div>
                     <p className="text-sm font-black text-green-600">เดินทางได้รวดเดียว</p>
-                    <p className="text-[11px] font-bold text-green-700/60">พลังงานเพียงพอจนถึงที่หมาย</p>
+                    <p className="text-[11px] font-bold text-green-700/60">พลังงานเพียงพอจนถึงที่หมาย (EPA)</p>
                   </div>
                 </div>
               )}
@@ -747,7 +759,7 @@ function MapView({
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/20 backdrop-blur-sm">
            <div className="flex flex-col items-center gap-4 bg-white p-8 rounded-[2.5rem] shadow-2xl border border-primary/10">
               <Loader2 className="w-12 h-12 text-primary animate-spin" />
-              <p className="text-sm font-black text-primary uppercase tracking-[0.2em]">กำลังวิเคราะห์สถานีชาร์จในรัศมี 10 กม...</p>
+              <p className="text-sm font-black text-primary uppercase tracking-[0.2em]">กำลังสแกนหา PTT, PEA, ELEXA, SPARK...</p>
            </div>
         </div>
       )}
