@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -50,7 +51,7 @@ export default function ChargeWayApp() {
   const [isPickingOnMap, setIsPickingOnMap] = useState<'origin' | 'destination' | null>(null);
 
   return (
-    <APIProvider apiKey={GOOGLE_MAPS_API_KEY} libraries={['places', 'geocoding', 'routes']}>
+    <APIProvider apiKey={GOOGLE_MAPS_API_KEY} libraries={['places', 'geocoding', 'routes', 'geometry']}>
       <div className="flex flex-col lg:flex-row h-screen w-full bg-background overflow-hidden font-body selection:bg-primary/20">
         {/* Left Control Panel */}
         <div className="w-full lg:w-[420px] h-full flex flex-col border-r border-border bg-card z-20 shadow-2xl overflow-hidden relative">
@@ -122,8 +123,7 @@ function TripForm({
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
   const [fullRange, setFullRange] = useState(400);
-  const [minBatteryThreshold, setMinBatteryThreshold] = useState(20);
-  // Default to selecting all available networks
+  const [minBatteryThreshold, setMinBatteryThreshold] = useState(15);
   const [selectedNetworks, setSelectedNetworks] = useState<string[]>(CHARGING_NETWORKS.map(n => n.id));
   
   const originInputRef = useRef<HTMLInputElement>(null);
@@ -131,9 +131,7 @@ function TripForm({
   const placesLib = useMapsLibrary('places');
 
   // EPA Usable range calculation
-  // Step 1: Calculate Actual EPA Range (85% of Factory spec)
-  const actualEpaRange = fullRange * EPA_FACTOR;
-  // Step 2: Calculate Usable range before hitting threshold
+  const actualEpaRange = Math.round(fullRange * EPA_FACTOR);
   const usableRange = Math.round(actualEpaRange * (1 - minBatteryThreshold / 100));
 
   useEffect(() => {
@@ -186,7 +184,6 @@ function TripForm({
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-left-4 duration-500">
-      {/* Route Inputs */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 mb-2">
           <div className="w-1.5 h-4 bg-primary rounded-full" />
@@ -250,7 +247,6 @@ function TripForm({
         </div>
       </section>
 
-      {/* Vehicle Config */}
       <section className="space-y-6">
         <div className="flex items-center gap-2 mb-2">
           <div className="w-1.5 h-4 bg-primary rounded-full" />
@@ -309,11 +305,10 @@ function TripForm({
                 <span className="text-[10px] font-bold text-muted-foreground italic">/ ชาร์จ</span>
              </div>
           </div>
-          <p className="text-[10px] text-muted-foreground italic text-right opacity-70">* คำนวณที่ 85% ของสเปคโรงงานเพื่อให้สอดคล้องกับการขับขี่จริง</p>
+          <p className="text-[10px] text-muted-foreground italic text-right opacity-70">* คำนวณที่ {EPA_FACTOR * 100}% ของสเปคโรงงานเพื่อให้สอดคล้องกับการขับขี่จริง</p>
         </div>
       </section>
 
-      {/* Network Filters */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 mb-2">
           <div className="w-1.5 h-4 bg-primary rounded-full" />
@@ -401,35 +396,16 @@ function MapView({
     });
   }, [isPickingOnMap, geocodingLib, setIsPickingOnMap]);
 
-  const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng, networksToSearch: any[]) => {
+  const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng) => {
     if (!placesLib || !map) return [];
     
     const service = new google.maps.places.PlacesService(map);
-    const searchPromises = networksToSearch.map(network => {
-      return new Promise<any[]>((resolve) => {
-        // Broad search with multiple keywords to maximize results
-        // Using radius 20000 (20km) and return up to 20 results (default for nearbySearch)
-        service.nearbySearch({
-          location,
-          radius: 20000, 
-          keyword: network.query
-        }, (results, status) => {
-          if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-            // Returning all results without filter as requested
-            resolve(results);
-          } else {
-            resolve([]);
-          }
-        });
-      });
-    });
-
-    // Also perform a general broad search to ensure nothing is missed
-    const broadSearchPromise = new Promise<any[]>((resolve) => {
+    return new Promise<any[]>((resolve) => {
+      // Broad Nearby Search according to requirement: "PTT EV", "ปตท EV", "PEA VOLTA", "VOLTA", "ELEXA", "EV Charging Station"
       service.nearbySearch({
         location,
-        radius: 20000,
-        keyword: "EV Charging Station ปตท PEA VOLTA ELEXA SPARK",
+        radius: 20000, // 20km radius as requested
+        keyword: "PTT EV ปตท EV EV Station Pluz PEA VOLTA VOLTA ELEXA SPARK EV Charging Station",
         type: 'car_charging_station'
       }, (results, status) => {
         if (status === google.maps.places.PlacesServiceStatus.OK && results) {
@@ -439,17 +415,6 @@ function MapView({
         }
       });
     });
-
-    const resultsArray = await Promise.all([...searchPromises, broadSearchPromise]);
-    const flatResults = resultsArray.flat();
-    
-    // De-duplicate by place_id
-    const uniqueMap = new window.Map();
-    flatResults.forEach(res => {
-      if (res.place_id) uniqueMap.set(res.place_id, res);
-    });
-    
-    return Array.from(uniqueMap.values());
   }, [placesLib, map]);
 
   useEffect(() => {
@@ -457,7 +422,7 @@ function MapView({
     
     const calculateRoute = async () => {
       setIsLoading(true);
-      const { origin, destination, fullRange, minBatteryThreshold, selectedNetworks } = tripData;
+      const { origin, destination, fullRange, minBatteryThreshold } = tripData;
       const directionsService = new google.maps.DirectionsService();
       
       try {
@@ -481,44 +446,50 @@ function MapView({
         setPlannedStops([]);
         setSelectedStation(null);
 
-        // Calculate thresholds using EPA Adjustment (85%)
-        const epaEstimatedRange = fullRange * EPA_FACTOR;
-        const usableRangeKm = epaEstimatedRange * (1 - minBatteryThreshold / 100);
+        // EPA Calculations
+        const actualEpaRange = fullRange * EPA_FACTOR;
+        const usableRangePerCharge = actualEpaRange * (1 - minBatteryThreshold / 100);
 
         const stops: any[] = [];
-        const activeNetworks = CHARGING_NETWORKS.filter(n => selectedNetworks.includes(n.id));
-
+        const allFoundStations: any[] = [];
+        
+        // Precise segment-based stop calculation using overview_path
+        const path = result.routes[0].overview_path;
         let currentSegmentDist = 0;
         let cumulativeDist = 0;
-        const allFoundStations: any[] = [];
 
-        if (totalDistanceKm > usableRangeKm) {
-          // Identify stops along the route path precisely
-          for (const step of route.steps) {
-            const stepDist = (step.distance?.value || 0) / 1000;
-            currentSegmentDist += stepDist;
-            cumulativeDist += stepDist;
+        // Loop through the path points to find precise stop locations
+        for (let i = 0; i < path.length - 1; i++) {
+          const p1 = path[i];
+          const p2 = path[i+1];
+          // Use spherical geometry to compute distance between LatLng points
+          const d = google.maps.geometry.spherical.computeDistanceBetween(p1, p2) / 1000;
+          
+          currentSegmentDist += d;
+          cumulativeDist += d;
 
-            if (currentSegmentDist >= usableRangeKm) {
-              const stopLoc = step.end_location;
-              stops.push({
-                location: stopLoc,
-                title: `จุดชาร์จที่ ${stops.length + 1}`,
-                atKm: Math.round(cumulativeDist)
-              });
-              
-              // Search stations for this specific stop (20km radius)
-              const foundStations = await searchStationsAtLocation(stopLoc, activeNetworks);
-              allFoundStations.push(...foundStations);
-              
-              currentSegmentDist = 0; // Reset segment distance for next leg
-            }
+          // If segment exceeds usable range, place a stop
+          if (currentSegmentDist >= usableRangePerCharge) {
+            const stopLoc = p2;
+            stops.push({
+              location: stopLoc,
+              atKm: Math.round(cumulativeDist)
+            });
+            
+            // Search around this point (20km radius)
+            const found = await searchStationsAtLocation(stopLoc);
+            allFoundStations.push(...found);
+            
+            // RESET segment distance to measure accurately for the next stop
+            currentSegmentDist = 0; 
           }
         }
 
         // De-duplicate final stations
         const finalUniqueStationsMap = new window.Map();
-        allFoundStations.forEach(s => finalUniqueStationsMap.set(s.place_id, s));
+        allFoundStations.forEach(s => {
+          if (s.place_id) finalUniqueStationsMap.set(s.place_id, s);
+        });
         
         const finalStationsList = Array.from(finalUniqueStationsMap.values());
         setStations(finalStationsList);
@@ -640,7 +611,6 @@ function MapView({
         )}
       </Map>
 
-      {/* Overlays */}
       {routeInfo && (
         <div className="absolute top-6 right-6 z-20 flex flex-col gap-5 w-[340px] md:w-[380px] max-h-[90vh] overflow-y-auto no-scrollbar">
           <Card className="border-none shadow-[0_20px_50px_rgba(0,0,0,0.15)] bg-white/95 backdrop-blur-xl rounded-[2rem] overflow-hidden animate-in slide-in-from-right duration-700">
@@ -698,7 +668,7 @@ function MapView({
 
                   {stations.length > 0 && (
                     <div className="space-y-2">
-                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">เครือข่ายที่คุณชอบในรัศมี 20 กม. ({stations.length})</p>
+                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">ตัวเลือกสถานีใกล้เคียงในรัศมี 20 กม. ({stations.length})</p>
                       <ScrollArea className="h-[200px] rounded-2xl border border-border/50 p-2">
                         <div className="space-y-2">
                           {stations.map((s, idx) => (
@@ -758,10 +728,11 @@ function MapView({
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/20 backdrop-blur-sm">
            <div className="flex flex-col items-center gap-4 bg-white p-8 rounded-[2.5rem] shadow-2xl border border-primary/10">
               <Loader2 className="w-12 h-12 text-primary animate-spin" />
-              <p className="text-sm font-black text-primary uppercase tracking-[0.2em]">กำลังสแกนหา PTT, PEA, ELEXA, SPARK...</p>
+              <p className="text-sm font-black text-primary uppercase tracking-[0.2em]">กำลังคำนวณระยะ EPA และจุดแวะชาร์จ...</p>
            </div>
         </div>
       )}
     </>
   );
 }
+
