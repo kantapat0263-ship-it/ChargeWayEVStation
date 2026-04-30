@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -432,8 +431,8 @@ function MapView({
     const resultsArray = await Promise.all(searchPromises);
     const flatResults = resultsArray.flat();
     
-    // De-duplicate by place_id
-    const uniqueMap = new Map();
+    // De-duplicate by place_id. Use window.Map to avoid collision with React Map component
+    const uniqueMap = new window.Map();
     flatResults.forEach(res => {
       if (res.place_id) uniqueMap.set(res.place_id, res);
     });
@@ -505,7 +504,7 @@ function MapView({
         }
 
         // De-duplicate final stations across all stops
-        const finalUniqueStationsMap = new Map();
+        const finalUniqueStationsMap = new window.Map();
         allFoundStations.forEach(s => finalUniqueStationsMap.set(s.place_id, s));
         
         setStations(Array.from(finalUniqueStationsMap.values()));
