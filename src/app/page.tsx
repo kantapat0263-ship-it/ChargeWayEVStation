@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
@@ -35,7 +34,7 @@ import {
   Crosshair,
   Target
 } from 'lucide-react';
-import { CHARGING_NETWORKS, ATTO3_RANGE_KM } from '@/lib/constants';
+import { CHARGING_NETWORKS } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PIl-0fyiz40tHHH8Hnk";
@@ -56,12 +55,12 @@ export default function ChargeWayApp() {
                   <Zap className="text-primary w-6 h-6 fill-primary/20" />
                 </div>
                 <div>
-                  <h1 className="text-xl font-extrabold tracking-tight text-primary">ChargeWay ATTO3</h1>
-                  <p className="text-[10px] uppercase font-black text-muted-foreground tracking-[0.2em]">BYD Smart Journey</p>
+                  <h1 className="text-xl font-extrabold tracking-tight text-primary">ChargeWay</h1>
+                  <p className="text-[10px] uppercase font-black text-muted-foreground tracking-[0.2em]">Smart EV Journey Planner</p>
                 </div>
               </div>
               <Badge variant="outline" className="rounded-full bg-secondary/5 text-secondary border-secondary/20 font-bold px-3">
-                v1.4.1
+                Generic EV v2.0
               </Badge>
             </div>
           </header>
@@ -116,8 +115,8 @@ function TripForm({
 }) {
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
-  const [currentBattery, setCurrentBattery] = useState(80);
-  const [minBatteryThreshold, setMinBatteryThreshold] = useState(20);
+  const [currentRange, setCurrentRange] = useState(400);
+  const [minRangeThreshold, setMinRangeThreshold] = useState(50);
   const [selectedNetworks, setSelectedNetworks] = useState<string[]>([]);
   
   const originInputRef = useRef<HTMLInputElement>(null);
@@ -166,15 +165,11 @@ function TripForm({
     onPlanTrip({ 
       origin, 
       destination, 
-      currentBattery, 
-      minBatteryThreshold, 
+      currentRange, 
+      minRangeThreshold, 
       selectedNetworks 
     });
   };
-
-  const currentRange = useMemo(() => 
-    ((currentBattery / 100) * ATTO3_RANGE_KM).toFixed(0), 
-  [currentBattery]);
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-left-4 duration-500">
@@ -242,38 +237,33 @@ function TripForm({
         </div>
       </section>
 
-      {/* Battery Config */}
+      {/* Range Config */}
       <section className="space-y-6">
         <div className="flex items-center gap-2 mb-2">
           <div className="w-1.5 h-4 bg-primary rounded-full" />
-          <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">แบตเตอรี่และการชาร์จ</h2>
+          <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">การตั้งค่าระยะทาง</h2>
         </div>
 
         <div className="space-y-5 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
           <div className="flex justify-between items-center">
             <Label className="flex items-center gap-2.5 text-sm font-bold text-foreground/80">
               <div className="p-1.5 bg-primary/10 rounded-lg text-primary">
-                <Battery className="w-4 h-4" />
+                <Car className="w-4 h-4" />
               </div> 
-              แบตเตอรี่เริ่มต้น
+              ระยะทางที่วิ่งได้ขณะนี้
             </Label>
-            <span className="text-sm font-black text-primary bg-primary/10 px-3 py-1 rounded-xl tabular-nums">{currentBattery}%</span>
+            <span className="text-sm font-black text-primary bg-primary/10 px-3 py-1 rounded-xl tabular-nums">{currentRange} กม.</span>
           </div>
           <Slider 
-            value={[currentBattery]} 
-            onValueChange={v => setCurrentBattery(v[0])} 
-            max={100} 
-            step={1}
+            value={[currentRange]} 
+            onValueChange={v => setCurrentRange(v[0])} 
+            max={1000} 
+            step={5}
             className="py-1 cursor-pointer"
           />
           <div className="flex items-center justify-between text-[11px] font-bold text-muted-foreground/70">
-            <p className="flex items-center gap-1.5 text-primary">
-              <Car className="w-3.5 h-3.5" /> ระยะทางที่วิ่งได้: {currentRange} กม.
-            </p>
-            <div className="flex gap-4">
-              <p>0%</p>
-              <p>100%</p>
-            </div>
+            <p>0 กม.</p>
+            <p>1,000 กม.</p>
           </div>
         </div>
 
@@ -283,19 +273,19 @@ function TripForm({
               <div className="p-1.5 bg-secondary/10 rounded-lg text-secondary">
                 <Zap className="w-4 h-4" />
               </div> 
-              จุดที่ต้องการเริ่มชาร์จ
+              เหลือระยะกี่ กม. ถึงเริ่มชาร์จ
             </Label>
-            <span className="text-sm font-black text-secondary bg-secondary/10 px-3 py-1 rounded-xl tabular-nums">{minBatteryThreshold}%</span>
+            <span className="text-sm font-black text-secondary bg-secondary/10 px-3 py-1 rounded-xl tabular-nums">{minRangeThreshold} กม.</span>
           </div>
           <Slider 
-            value={[minBatteryThreshold]} 
-            onValueChange={v => setMinBatteryThreshold(v[0])} 
-            max={50} 
+            value={[minRangeThreshold]} 
+            onValueChange={v => setMinRangeThreshold(v[0])} 
+            max={200} 
             min={10}
-            step={1}
+            step={5}
             className="py-1 cursor-pointer"
           />
-          <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider text-right italic">เมื่อแบตเหลือถึงจุดนี้ จะค้นหาสถานีชาร์จในรัศมี 10 กม.</p>
+          <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider text-right italic">เมื่อระยะเหลือถึงจุดนี้ จะค้นหาสถานีชาร์จในรัศมี 10 กม.</p>
         </div>
       </section>
 
@@ -423,7 +413,7 @@ function MapView({
     
     const calculateRoute = async () => {
       setIsLoading(true);
-      const { origin, destination, currentBattery, minBatteryThreshold, selectedNetworks } = tripData;
+      const { origin, destination, currentRange, minRangeThreshold, selectedNetworks } = tripData;
       const directionsService = new google.maps.DirectionsService();
       
       try {
@@ -446,15 +436,14 @@ function MapView({
         setPlannedStops([]);
         setSelectedStation(null);
 
-        // Calculate distance until battery reaches threshold
-        const batteryAvailableForTrip = Math.max(0, currentBattery - minBatteryThreshold);
-        const distanceToChargePointKm = (batteryAvailableForTrip / 100) * ATTO3_RANGE_KM;
+        // Distance you can drive until you reach the threshold
+        const distanceToChargePointKm = Math.max(0, currentRange - minRangeThreshold);
 
         if (distanceKm > distanceToChargePointKm) {
           let cumulativeDistance = 0;
           let stopLocation = route.end_location;
 
-          // Find the point on the path where we need to charge
+          // Find the point on the path where we reach the threshold
           for (const step of route.steps) {
             cumulativeDistance += (step.distance?.value || 0) / 1000;
             if (cumulativeDistance >= distanceToChargePointKm) {
@@ -472,7 +461,7 @@ function MapView({
             CHARGING_NETWORKS.find(n => n.id === id)?.query || ""
           ).filter(Boolean);
           
-          // Search in 10km radius around the predicted low battery point as requested
+          // Search in 10km radius
           searchStations(stopLocation, 10000, networkQueries);
           
           const bounds = new google.maps.LatLngBounds();
@@ -517,7 +506,7 @@ function MapView({
   return (
     <>
       <Map
-        mapId="charge_way_atto3_v3"
+        mapId="charge_way_v4"
         defaultCenter={{ lat: 13.7367, lng: 100.5231 }}
         defaultZoom={12}
         gestureHandling={'greedy'}
@@ -586,13 +575,13 @@ function MapView({
               </div>
               <div>
                 <CardTitle className="text-base font-black text-primary">วิเคราะห์เส้นทาง</CardTitle>
-                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">คำนวณสำหรับ BYD ATTO3</p>
+                <p className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">คำนวณตามระยะทางคงเหลือ</p>
               </div>
             </CardHeader>
             <CardContent className="p-6 space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-muted/40 p-4 rounded-2xl border border-border/20 group hover:bg-muted/60 transition-colors">
-                  <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter mb-1">ระยะทาง</p>
+                  <p className="text-[10px] text-muted-foreground uppercase font-black tracking-tighter mb-1">ระยะทางทั้งหมด</p>
                   <p className="text-xl font-black text-primary tabular-nums">{routeInfo.distance}</p>
                 </div>
                 <div className="bg-muted/40 p-4 rounded-2xl border border-border/20 group hover:bg-muted/60 transition-colors">
@@ -637,7 +626,7 @@ function MapView({
                   </div>
                   <div>
                     <p className="text-sm font-black text-green-600">เดินทางได้ตลอดเส้นทาง</p>
-                    <p className="text-[11px] font-bold text-green-700/60">แบตเตอรี่เพียงพอ ไม่ต้องแวะชาร์จ</p>
+                    <p className="text-[11px] font-bold text-green-700/60">พลังงานเพียงพอ ไม่ต้องแวะชาร์จ</p>
                   </div>
                 </div>
               )}
