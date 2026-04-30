@@ -33,7 +33,8 @@ import {
   Search,
   Crosshair,
   Target,
-  AlertCircle
+  AlertCircle,
+  Star
 } from 'lucide-react';
 import { CHARGING_NETWORKS } from '@/lib/constants';
 import { cn } from '@/lib/utils';
@@ -61,7 +62,7 @@ export default function ChargeWayApp() {
                 </div>
               </div>
               <Badge variant="outline" className="rounded-full bg-secondary/5 text-secondary border-secondary/20 font-bold px-3">
-                Multi-Stop v3.0
+                Multi-Stop v3.1
               </Badge>
             </div>
           </header>
@@ -407,14 +408,14 @@ function MapView({
     if (!placesLib || !map) return;
     const service = new google.maps.places.PlacesService(map);
     
-    // Always include a general query for EV stations
     const queries = networkQueries.length > 0 ? networkQueries : ['EV Charging Station'];
 
     queries.forEach(query => {
       service.nearbySearch({
         location,
         radius: 10000, // 10km radius as requested
-        keyword: query
+        keyword: query,
+        type: 'car_charging_station'
       }, (results, status) => {
         if (status === google.maps.places.PlacesServiceStatus.OK && results) {
           setStations(prev => {
@@ -428,7 +429,7 @@ function MapView({
   }, [placesLib, map]);
 
   useEffect(() => {
-    if (!tripData || !routesLib || !directionsRenderer) return;
+    if (!tripData || !routesLib || !directionsRenderer || !placesLib || !map) return;
     
     const calculateRoute = async () => {
       setIsLoading(true);
@@ -470,7 +471,6 @@ function MapView({
         let cumulativeDist = 0;
         let nextTargetDist = usableInitialKm;
 
-        // If total distance is more than what we have now
         if (totalDistanceKm > usableInitialKm) {
           route.steps.forEach(step => {
             const stepDist = (step.distance?.value || 0) / 1000;
@@ -486,7 +486,6 @@ function MapView({
               // Trigger search for stations around this stop
               searchStations(stopLoc, networkQueries);
               
-              // Plan next stop after full charge (minus threshold)
               nextTargetDist += usableFullKm;
             }
             cumulativeDist = newCumulativeDist;
@@ -495,7 +494,6 @@ function MapView({
 
         setPlannedStops(stops);
         
-        // Auto fit bounds
         const bounds = new google.maps.LatLngBounds();
         bounds.extend(route.start_location);
         bounds.extend(route.end_location);
@@ -510,7 +508,7 @@ function MapView({
     };
 
     calculateRoute();
-  }, [tripData, routesLib, directionsRenderer, searchStations, map]);
+  }, [tripData, routesLib, directionsRenderer, searchStations, map, placesLib]);
 
   const openInGoogleMaps = () => {
     if (!directionsRenderer) return;
@@ -523,7 +521,6 @@ function MapView({
     
     let url = `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destinationStr}`;
     
-    // Add waypoints (charging stops)
     const waypoints = [];
     if (selectedStation) {
       waypoints.push(`${selectedStation.geometry.location.lat()},${selectedStation.geometry.location.lng()}`);
@@ -609,7 +606,7 @@ function MapView({
 
       {/* Overlays */}
       {routeInfo && (
-        <div className="absolute top-6 right-6 z-20 flex flex-col gap-5 w-[340px] md:w-[380px]">
+        <div className="absolute top-6 right-6 z-20 flex flex-col gap-5 w-[340px] md:w-[380px] max-h-[90vh] overflow-y-auto no-scrollbar">
           <Card className="border-none shadow-[0_20px_50px_rgba(0,0,0,0.15)] bg-white/95 backdrop-blur-xl rounded-[2rem] overflow-hidden animate-in slide-in-from-right duration-700">
             <CardHeader className="bg-primary/5 p-6 flex flex-row items-center gap-4 border-b border-primary/10">
               <div className="bg-primary p-3 rounded-2xl shadow-lg shadow-primary/20">
@@ -633,31 +630,66 @@ function MapView({
               </div>
               
               {plannedStops.length > 0 ? (
-                <div className="bg-secondary/5 p-5 rounded-[1.5rem] border-2 border-dashed border-secondary/30 flex flex-col gap-4">
-                  <div className="flex items-center gap-4">
-                    <div className="bg-secondary p-2.5 rounded-xl shadow-md shadow-secondary/20">
-                      <Zap className="w-5 h-5 text-white fill-white" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-black text-secondary">ต้องแวะชาร์จ {plannedStops.length} ครั้ง</p>
-                      <p className="text-[11px] font-bold text-muted-foreground">แสดงสถานีชาร์จรอบจุดแวะ 10 กม.</p>
-                    </div>
-                  </div>
-                  
-                  {selectedStation ? (
-                    <div className="pt-3 border-t border-secondary/20 animate-in fade-in zoom-in-95">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[12px] font-black text-primary truncate">{selectedStation.name}</p>
-                          <p className="text-[10px] font-medium text-muted-foreground truncate">{selectedStation.vicinity}</p>
-                        </div>
-                        <Badge className="bg-primary text-white text-[9px] shrink-0 ml-2">เลือกแล้ว</Badge>
+                <div className="space-y-4">
+                  <div className="bg-secondary/5 p-5 rounded-[1.5rem] border-2 border-dashed border-secondary/30 flex flex-col gap-4">
+                    <div className="flex items-center gap-4">
+                      <div className="bg-secondary p-2.5 rounded-xl shadow-md shadow-secondary/20">
+                        <Zap className="w-5 h-5 text-white fill-white" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-secondary">ต้องแวะชาร์จ {plannedStops.length} ครั้ง</p>
+                        <p className="text-[11px] font-bold text-muted-foreground">แสดงสถานีชาร์จรอบจุดแวะ 10 กม.</p>
                       </div>
                     </div>
-                  ) : (
-                    <div className="flex items-center justify-center p-3 rounded-xl bg-white/50 border border-secondary/20 animate-pulse-soft">
-                      <AlertCircle className="w-3.5 h-3.5 text-secondary mr-2" />
-                      <p className="text-[10px] font-black text-secondary uppercase tracking-widest">กรุณาเลือกสถานีบนแผนที่</p>
+                    
+                    {selectedStation ? (
+                      <div className="pt-3 border-t border-secondary/20 animate-in fade-in zoom-in-95">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[12px] font-black text-primary truncate">{selectedStation.name}</p>
+                            <p className="text-[10px] font-medium text-muted-foreground truncate">{selectedStation.vicinity}</p>
+                          </div>
+                          <Badge className="bg-primary text-white text-[9px] shrink-0 ml-2">เลือกแล้ว</Badge>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center p-3 rounded-xl bg-white/50 border border-secondary/20 animate-pulse-soft">
+                        <AlertCircle className="w-3.5 h-3.5 text-secondary mr-2" />
+                        <p className="text-[10px] font-black text-secondary uppercase tracking-widest">กรุณาเลือกสถานีบนแผนที่</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* List of stations found */}
+                  {stations.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">สถานีที่พบ ({stations.length})</p>
+                      <ScrollArea className="h-[180px] rounded-2xl border border-border/50 p-2">
+                        <div className="space-y-2">
+                          {stations.map((s, idx) => (
+                            <button
+                              key={s.place_id || idx}
+                              onClick={() => {
+                                setSelectedStation(s);
+                                map?.panTo(s.geometry.location);
+                                map?.setZoom(15);
+                              }}
+                              className={cn(
+                                "w-full text-left p-3 rounded-xl transition-all border",
+                                selectedStation?.place_id === s.place_id 
+                                  ? "bg-primary/5 border-primary/20" 
+                                  : "bg-white border-transparent hover:bg-muted/30"
+                              )}
+                            >
+                              <div className="flex justify-between items-start gap-2">
+                                <p className="text-[11px] font-bold text-foreground truncate">{s.name}</p>
+                                {s.rating && <span className="text-[10px] font-bold text-orange-500 shrink-0">⭐ {s.rating}</span>}
+                              </div>
+                              <p className="text-[9px] text-muted-foreground truncate">{s.vicinity}</p>
+                            </button>
+                          ))}
+                        </div>
+                      </ScrollArea>
                     </div>
                   )}
                 </div>
