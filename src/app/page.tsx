@@ -404,21 +404,16 @@ function MapView({
     const service = new google.maps.places.PlacesService(map);
     const searchPromises = networksToSearch.map(network => {
       return new Promise<any[]>((resolve) => {
-        // Broad search with keyword in 20km radius
+        // Broad search with multiple keywords to maximize results
+        // Using radius 20000 (20km) and return up to 20 results (default for nearbySearch)
         service.nearbySearch({
           location,
-          radius: 20000, // 20km radius
+          radius: 20000, 
           keyword: network.query
         }, (results, status) => {
           if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-            // Filter results to ensure brand matches name or vicinity
-            const filtered = results.filter(place => {
-              const name = place.name?.toLowerCase() || "";
-              const vicinity = place.vicinity?.toLowerCase() || "";
-              const matchTag = network.brandMatch.toLowerCase();
-              return name.includes(matchTag) || vicinity.includes(matchTag);
-            });
-            resolve(filtered);
+            // Returning all results without filter as requested
+            resolve(results);
           } else {
             resolve([]);
           }
@@ -426,10 +421,26 @@ function MapView({
       });
     });
 
-    const resultsArray = await Promise.all(searchPromises);
+    // Also perform a general broad search to ensure nothing is missed
+    const broadSearchPromise = new Promise<any[]>((resolve) => {
+      service.nearbySearch({
+        location,
+        radius: 20000,
+        keyword: "EV Charging Station ปตท PEA VOLTA ELEXA SPARK",
+        type: 'car_charging_station'
+      }, (results, status) => {
+        if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+          resolve(results);
+        } else {
+          resolve([]);
+        }
+      });
+    });
+
+    const resultsArray = await Promise.all([...searchPromises, broadSearchPromise]);
     const flatResults = resultsArray.flat();
     
-    // De-duplicate by place_id using window.Map
+    // De-duplicate by place_id
     const uniqueMap = new window.Map();
     flatResults.forEach(res => {
       if (res.place_id) uniqueMap.set(res.place_id, res);
@@ -478,13 +489,12 @@ function MapView({
         const allFoundStations: any[] = [];
 
         if (totalDistanceKm > usableRangeKm) {
-          // Identify stops along the route path precisely using route steps
+          // Identify stops along the route path precisely
           for (const step of route.steps) {
             const stepDist = (step.distance?.value || 0) / 1000;
             currentSegmentDist += stepDist;
             cumulativeDist += stepDist;
 
-            // When we exceed the usable range, we need to find a station
             if (currentSegmentDist >= usableRangeKm) {
               const stopLoc = step.end_location;
               stops.push({
@@ -497,12 +507,12 @@ function MapView({
               const foundStations = await searchStationsAtLocation(stopLoc, activeNetworks);
               allFoundStations.push(...foundStations);
               
-              currentSegmentDist = 0; // Reset segment distance for next charge leg
+              currentSegmentDist = 0; // Reset segment distance for next leg
             }
           }
         }
 
-        // De-duplicate final stations across all stops
+        // De-duplicate final stations
         const finalUniqueStationsMap = new window.Map();
         allFoundStations.forEach(s => finalUniqueStationsMap.set(s.place_id, s));
         
@@ -510,7 +520,7 @@ function MapView({
         setStations(finalStationsList);
         setPlannedStops(stops);
         
-        // Adjust map bounds to show everything
+        // Adjust map bounds
         const bounds = new google.maps.LatLngBounds();
         bounds.extend(route.start_location);
         bounds.extend(route.end_location);
