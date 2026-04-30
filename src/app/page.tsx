@@ -420,7 +420,15 @@ function MapView({
           type: 'car_charging_station'
         }, (results, status) => {
           if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-            resolve(results);
+            // Strict filtering by name if networkQueries are provided
+            if (networkQueries.length > 0) {
+              const filtered = results.filter(place => 
+                networkQueries.some(q => place.name?.toLowerCase().includes(q.toLowerCase()))
+              );
+              resolve(filtered);
+            } else {
+              resolve(results);
+            }
           } else {
             resolve([]);
           }
