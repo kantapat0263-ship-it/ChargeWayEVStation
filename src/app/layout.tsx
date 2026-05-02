@@ -2,8 +2,13 @@ import type {Metadata} from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'ChargeWay ATTO3 - Smart EV Trip Planner',
-  description: 'The ultimate trip planner for BYD ATTO3 owners. Calculate stops, find chargers, and navigate with ease in Thailand.',
+  title: 'ChargeWay',
+  description: 'Smart EV Trip Planner',
+  manifest: '/manifest.json',
+  other: {
+    'theme-color': '#22c55e',
+    'mobile-web-app-capable': 'yes',
+  },
 };
 
 export default function RootLayout({
