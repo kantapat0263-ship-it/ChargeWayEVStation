@@ -136,29 +136,37 @@ function ThemeToggle({ isDark, onToggle }: { isDark: boolean; onToggle: () => vo
 
 // ไทยขับเลนซ้าย → สถานีที่เข้าได้ง่าย = ฝั่งซ้ายของทิศทางที่รถวิ่ง
 const DRIVER_SIDE: 'left' | 'right' = 'left';
+// ปั๊มที่อยู่ใกล้แนวเส้นทางกว่านี้ถือว่า "ก้ำกึ่ง" (เช่น หมุดตกกลางเกาะกลาง) ไม่ฟันธงซ้าย/ขวา
+const NEAR_ROUTE_M = 15;
 
-// หาว่าจุด (สถานี) อยู่ฝั่งซ้ายหรือขวาของเส้นทาง โดยเทียบกับช่วงเส้นทางที่ใกล้ที่สุด
-// ใช้ระนาบ lng(x)/lat(y): cross > 0 = ซ้ายของทิศทางวิ่ง, < 0 = ขวา
-function sideOfRoute(loc: google.maps.LatLng, path: google.maps.LatLng[]): 'left' | 'right' {
+type RouteSide = 'left' | 'right' | 'near';
+
+// หาว่าจุด (สถานี) อยู่ฝั่งซ้าย/ขวา/ก้ำกึ่ง ของเส้นทาง เทียบกับช่วงที่ใกล้ที่สุด
+// คำนวณบนระบบพิกัด "เมตรท้องถิ่น" (คูณ lng ด้วย cos(lat) เพื่อตัด distortion)
+// cross > 0 = ซ้ายของทิศวิ่ง, < 0 = ขวา; ถ้าใกล้เส้นมากให้ผลเป็น 'near'
+function sideOfRoute(loc: google.maps.LatLng, path: google.maps.LatLng[]): RouteSide {
   const px = loc.lng(), py = loc.lat();
-  let best = Infinity;
-  let cross = 0;
+  const mPerLat = 111320;
+  const mPerLng = 111320 * Math.cos(py * Math.PI / 180);
+  // วางจุดปั๊มไว้ที่ origin (0,0) ของระบบเมตร แล้วเทียบเซกเมนต์รอบ ๆ
+  let bestDist = Infinity;
+  let crossAtBest = 0;
   for (let i = 0; i < path.length - 1; i++) {
-    const ax = path[i].lng(), ay = path[i].lat();
-    const bx = path[i + 1].lng(), by = path[i + 1].lat();
+    const ax = (path[i].lng() - px) * mPerLng, ay = (path[i].lat() - py) * mPerLat;
+    const bx = (path[i + 1].lng() - px) * mPerLng, by = (path[i + 1].lat() - py) * mPerLat;
     const dx = bx - ax, dy = by - ay;
-    const len2 = dx * dx + dy * dy || 1e-12;
-    let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+    const len2 = dx * dx + dy * dy || 1e-9;
+    let t = -(ax * dx + ay * dy) / len2; // โปรเจกต์ origin ลงบนเซกเมนต์
     t = Math.max(0, Math.min(1, t));
     const cx = ax + t * dx, cy = ay + t * dy;
-    const ex = px - cx, ey = py - cy;
-    const d2 = ex * ex + ey * ey;
-    if (d2 < best) {
-      best = d2;
-      cross = dx * (py - ay) - dy * (px - ax);
+    const dist = Math.hypot(cx, cy); // ระยะจากปั๊มถึงเส้น (เมตร)
+    if (dist < bestDist) {
+      bestDist = dist;
+      crossAtBest = dx * (-ay) - dy * (-ax); // cross(ทิศเซกเมนต์, a→ปั๊ม)
     }
   }
-  return cross >= 0 ? 'left' : 'right';
+  if (bestDist < NEAR_ROUTE_M) return 'near';
+  return crossAtBest >= 0 ? 'left' : 'right';
 }
 
 // แปลงนาทีเป็นข้อความ เช่น "1 ชม. 20 นาที"
@@ -192,7 +200,8 @@ function getOpenStatus(station: any): boolean | undefined {
 function stationScore(s: any): number {
   let score = (s?.rating || 0);
   score += Math.log10((s?.user_ratings_total || 0) + 1) * 0.3;
-  if (!s?.side || s.side === DRIVER_SIDE) score += 1; // ฝั่งเดินทาง = เข้าสะดวก
+  if (!s?.side || s.side === DRIVER_SIDE) score += 1;        // ฝั่งเดินทาง = เข้าสะดวก
+  else if (s.side === 'near') score += 0.5;                  // ก้ำกึ่ง = อาจเข้าได้
   const open = getOpenStatus(s);
   if (open === true) score += 0.4;
   if (open === false) score -= 0.4;
@@ -993,7 +1002,7 @@ function MapView({
   // สถานีที่จะแสดง: ค่าเริ่มต้นเฉพาะฝั่งเดียวกับทิศทางขับ (เผื่อไม่มีข้อมูลฝั่งก็แสดง)
   const visibleStations = showAllSides
     ? stations
-    : stations.filter((s: any) => !s.side || s.side === DRIVER_SIDE);
+    : stations.filter((s: any) => !s.side || s.side === DRIVER_SIDE || s.side === 'near');
 
   // ดึงรายละเอียดเพิ่มเติมของสถานีที่เลือก (เบอร์โทร/เว็บไซต์/เวลาเปิด)
   const selectStation = useCallback((station: any) => {
@@ -1143,6 +1152,12 @@ function MapView({
         const stops: any[] = [];
         const allFoundStations: any[] = [];
         const path = result.routes[0].overview_path;
+        // เส้นทางแบบละเอียด (จุดถี่จาก steps) สำหรับตัดสินฝั่งซ้าย/ขวาให้แม่นบนทางแบ่งเกาะกลาง
+        const detailedPath: google.maps.LatLng[] = [];
+        (result.routes[0].legs[0].steps || []).forEach((step: any) => {
+          if (step.path && step.path.length) detailedPath.push(...step.path);
+        });
+        const sidePath = detailedPath.length > 1 ? detailedPath : path;
         let currentSegmentDist = 0;
         let cumulativeDist = 0;
 
@@ -1206,8 +1221,8 @@ function MapView({
         allFoundStations.forEach(res => {
           // แสดงเฉพาะเครือข่ายที่รู้จัก (ตัดสถานีอื่น ๆ ออก)
           if (res.place_id && matchStationNetwork(res.name)) {
-            // ระบุว่าสถานีอยู่ฝั่งไหนของทิศทางเดินทาง (ซ้าย/ขวา)
-            res.side = sideOfRoute(res.geometry.location, path);
+            // ระบุว่าสถานีอยู่ฝั่งไหนของทิศทางเดินทาง (ซ้าย/ขวา/ก้ำกึ่ง) ด้วยเส้นละเอียด
+            res.side = sideOfRoute(res.geometry.location, sidePath);
             finalUniqueMap.set(res.place_id, res);
           }
         });
@@ -1730,7 +1745,7 @@ function MapView({
                         const isAuto = !selectedStops[i];
                         const sideCands = showAllSides
                           ? stop.candidates
-                          : (stop.candidates ?? []).filter((s: any) => !s.side || s.side === DRIVER_SIDE);
+                          : (stop.candidates ?? []).filter((s: any) => !s.side || s.side === DRIVER_SIDE || s.side === 'near');
                         const list = sideCands.length > 0 ? sideCands : (stop.candidates ?? []);
                         const isOpen = expandedStop === i;
                         const chosenNet = chosen ? (matchStationNetwork(chosen.name) ?? UNKNOWN_NETWORK) : null;
@@ -1789,7 +1804,9 @@ function MapView({
                                           <p className="text-[9px] text-muted-foreground truncate">{s.vicinity}</p>
                                           <div className="flex items-center gap-2 mt-0.5 text-[9px]">
                                             <StationRating rating={s.rating} total={s.user_ratings_total} />
-                                            {!s.side || s.side === DRIVER_SIDE ? (
+                                            {s.side === 'near' ? (
+                                              <span className="font-bold text-amber-600">ใกล้เส้นทาง</span>
+                                            ) : !s.side || s.side === DRIVER_SIDE ? (
                                               <span className="font-bold text-green-600">ฝั่งเดินทาง</span>
                                             ) : (
                                               <span className="font-bold text-muted-foreground">ฝั่งตรงข้าม</span>
