@@ -128,6 +128,33 @@ function ThemeToggle({ isDark, onToggle }: { isDark: boolean; onToggle: () => vo
   );
 }
 
+// ไทยขับเลนซ้าย → สถานีที่เข้าได้ง่าย = ฝั่งซ้ายของทิศทางที่รถวิ่ง
+const DRIVER_SIDE: 'left' | 'right' = 'left';
+
+// หาว่าจุด (สถานี) อยู่ฝั่งซ้ายหรือขวาของเส้นทาง โดยเทียบกับช่วงเส้นทางที่ใกล้ที่สุด
+// ใช้ระนาบ lng(x)/lat(y): cross > 0 = ซ้ายของทิศทางวิ่ง, < 0 = ขวา
+function sideOfRoute(loc: google.maps.LatLng, path: google.maps.LatLng[]): 'left' | 'right' {
+  const px = loc.lng(), py = loc.lat();
+  let best = Infinity;
+  let cross = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    const ax = path[i].lng(), ay = path[i].lat();
+    const bx = path[i + 1].lng(), by = path[i + 1].lat();
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy || 1e-12;
+    let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + t * dx, cy = ay + t * dy;
+    const ex = px - cx, ey = py - cy;
+    const d2 = ex * ex + ey * ey;
+    if (d2 < best) {
+      best = d2;
+      cross = dx * (py - ay) - dy * (px - ax);
+    }
+  }
+  return cross >= 0 ? 'left' : 'right';
+}
+
 // แปลงนาทีเป็นข้อความ เช่น "1 ชม. 20 นาที"
 function formatMinutes(min: number): string {
   if (min <= 0) return '0 นาที';
@@ -837,6 +864,9 @@ function MapView({
   } | null>(null);
   const { toast } = useToast();
 
+  // กรองสถานีให้เหลือเฉพาะฝั่งเดียวกับทิศทางเดินทาง (สลับดูทั้งหมดได้)
+  const [showAllSides, setShowAllSides] = useState(false);
+
   // ===== โหมดขับขี่สด (Live Driving Mode) =====
   const [isDriving, setIsDriving] = useState(false);
   const [nextStopIndex, setNextStopIndex] = useState(0);
@@ -869,6 +899,12 @@ function MapView({
     setIsDriving(false);
     setNearAlert(null);
   };
+
+  // สถานีที่จะแสดง: ค่าเริ่มต้นเฉพาะฝั่งเดียวกับทิศทางขับ (เผื่อไม่มีข้อมูลฝั่งก็แสดง)
+  const visibleStations = showAllSides
+    ? stations
+    : stations.filter((s: any) => !s.side || s.side === DRIVER_SIDE);
+  const hiddenSideCount = stations.length - visibleStations.length;
 
   // ดึงรายละเอียดเพิ่มเติมของสถานีที่เลือก (เบอร์โทร/เว็บไซต์/เวลาเปิด)
   const selectStation = useCallback((station: any) => {
@@ -1055,7 +1091,11 @@ function MapView({
         const finalUniqueMap = new window.Map();
         allFoundStations.forEach(res => {
           // แสดงเฉพาะเครือข่ายที่รู้จัก (ตัดสถานีอื่น ๆ ออก)
-          if (res.place_id && matchStationNetwork(res.name)) finalUniqueMap.set(res.place_id, res);
+          if (res.place_id && matchStationNetwork(res.name)) {
+            // ระบุว่าสถานีอยู่ฝั่งไหนของทิศทางเดินทาง (ซ้าย/ขวา)
+            res.side = sideOfRoute(res.geometry.location, path);
+            finalUniqueMap.set(res.place_id, res);
+          }
         });
 
         setStations(Array.from(finalUniqueMap.values()));
@@ -1240,7 +1280,7 @@ function MapView({
             </AdvancedMarker>
           )}
 
-          {stations.map((station, i) => {
+          {visibleStations.map((station, i) => {
             const net = matchStationNetwork(station.name) ?? UNKNOWN_NETWORK;
             const isSelected = selectedStation?.place_id === station.place_id;
             return (
@@ -1481,12 +1521,30 @@ function MapView({
 
                   {stations.length > 0 && (
                     <div className="space-y-2">
-                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">
-                        ตัวเลือกสถานี {stations.length} แห่ง (รัศมี {searchRadiusKm} กม.)
-                      </p>
+                      <div className="flex items-center justify-between gap-2 px-2">
+                        <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">
+                          ตัวเลือกสถานี {visibleStations.length}/{stations.length} แห่ง (รัศมี {searchRadiusKm} กม.)
+                        </p>
+                        <button
+                          onClick={() => setShowAllSides(v => !v)}
+                          className={cn(
+                            "shrink-0 text-[9px] font-black px-2 py-1 rounded-lg border transition-colors",
+                            showAllSides
+                              ? "bg-muted text-muted-foreground border-border/60"
+                              : "bg-primary/10 text-primary border-primary/30"
+                          )}
+                        >
+                          {showAllSides ? 'แสดงทั้งหมด' : 'เฉพาะฝั่งเดินทาง'}
+                        </button>
+                      </div>
+                      {!showAllSides && hiddenSideCount > 0 && (
+                        <p className="text-[9px] text-muted-foreground italic px-2">
+                          ซ่อนสถานีฝั่งตรงข้าม {hiddenSideCount} แห่ง — กด “แสดงทั้งหมด” เพื่อดู
+                        </p>
+                      )}
                       <ScrollArea className="h-[200px] rounded-2xl border border-border/50 p-2">
                         <div className="space-y-2">
-                          {stations.map((s, idx) => {
+                          {visibleStations.map((s, idx) => {
                             const net = matchStationNetwork(s.name) ?? UNKNOWN_NETWORK;
                             return (
                             <button
