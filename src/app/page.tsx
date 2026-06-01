@@ -91,6 +91,8 @@ import { useGeoWatch } from '@/hooks/use-geo-watch';
 import { useWakeLock } from '@/hooks/use-wake-lock';
 import { cn } from '@/lib/utils';
 
+// ตั้งค่า NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ใน .env.local / Vercel (ดู README)
+// fallback ด้านล่างเป็น key ชั่วคราว — ควร rotate + จำกัดสิทธิ์ตาม HTTP referrer ใน Google Cloud
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PIl-0fyiz40tHHH8Hnk";
 
 // จัดการธีมสว่าง/มืด เก็บค่าใน localStorage และสลับคลาส .dark บน <html>
