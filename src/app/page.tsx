@@ -70,6 +70,7 @@ import {
   Volume2,
   VolumeX,
   Gauge as GaugeIcon,
+  ChevronDown,
 } from 'lucide-react';
 import {
   CHARGING_NETWORKS,
@@ -186,7 +187,25 @@ function getOpenStatus(station: any): boolean | undefined {
   return undefined;
 }
 
-// แสดงดาวเรตติ้งของสถานี
+// ให้คะแนนสถานีเพื่อเลือก "ปั๊มที่ดีสุด" อัตโนมัติในโหมดนำทาง
+// เกณฑ์: อยู่ฝั่งเดียวกับทิศเดินทาง (เข้าง่าย) > เรตติ้งสูง > รีวิวเยอะ > เปิดอยู่
+function stationScore(s: any): number {
+  let score = (s?.rating || 0);
+  score += Math.log10((s?.user_ratings_total || 0) + 1) * 0.3;
+  if (!s?.side || s.side === DRIVER_SIDE) score += 1; // ฝั่งเดินทาง = เข้าสะดวก
+  const open = getOpenStatus(s);
+  if (open === true) score += 0.4;
+  if (open === false) score -= 0.4;
+  return score;
+}
+
+// เลือกปั๊มที่ดีสุดจากรายการตัวเลือกของจุดนั้น
+function pickBestStation(candidates: any[]): any | null {
+  if (!candidates || candidates.length === 0) return null;
+  return [...candidates].sort((a, b) => stationScore(b) - stationScore(a))[0];
+}
+
+
 function StationRating({ rating, total }: { rating?: number; total?: number }) {
   if (!rating) return null;
   return (
@@ -885,6 +904,9 @@ function MapView({
   const [plannedStops, setPlannedStops] = useState<any[]>([]);
   const [routeInfo, setRouteInfo] = useState<{distance: string, duration: string, distanceKm: number} | null>(null);
   const [selectedStation, setSelectedStation] = useState<any | null>(null);
+  // โหมดนำทาง: ปั๊มที่เลือกของแต่ละจุด (index ตรงกับ plannedStops); null = ใช้ค่าอัตโนมัติ
+  const [selectedStops, setSelectedStops] = useState<(any | null)[]>([]);
+  const [expandedStop, setExpandedStop] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [searchRadiusKm, setSearchRadiusKm] = useState(20);
@@ -972,7 +994,6 @@ function MapView({
   const visibleStations = showAllSides
     ? stations
     : stations.filter((s: any) => !s.side || s.side === DRIVER_SIDE);
-  const hiddenSideCount = stations.length - visibleStations.length;
 
   // ดึงรายละเอียดเพิ่มเติมของสถานีที่เลือก (เบอร์โทร/เว็บไซต์/เวลาเปิด)
   const selectStation = useCallback((station: any) => {
@@ -991,6 +1012,16 @@ function MapView({
       }
     );
   }, [placesLib, map]);
+
+  // โหมดนำทาง: กำหนดปั๊มให้จุดที่ i (หรือส่ง null เพื่อกลับไปใช้แบบอัตโนมัติ)
+  const chooseStationForStop = useCallback((stopIndex: number, station: any | null) => {
+    setSelectedStops(prev => {
+      const next = [...prev];
+      next[stopIndex] = station;
+      return next;
+    });
+    if (station) selectStation(station);
+  }, [selectStation]);
 
   useEffect(() => {
     if (!routesLib || !map) return;
@@ -1099,6 +1130,8 @@ function MapView({
         setStations([]);
         setPlannedStops([]);
         setSelectedStation(null);
+        setSelectedStops([]);
+        setExpandedStop(null);
         setChargeStats(null);
         setTripEta(null);
 
@@ -1179,8 +1212,24 @@ function MapView({
           }
         });
 
-        setStations(Array.from(finalUniqueMap.values()));
+        const knownStations = Array.from(finalUniqueMap.values());
+
+        // จับสถานีแต่ละแห่งเข้ากับ "จุดแวะ" ที่ใกล้ที่สุด -> เป็นตัวเลือกของจุดนั้น
+        const geomLib = google.maps.geometry.spherical;
+        stops.forEach((s: any) => { s.candidates = []; });
+        knownStations.forEach((st: any) => {
+          let bestIdx = 0, bestDist = Infinity;
+          stops.forEach((s: any, i: number) => {
+            const dd = geomLib.computeDistanceBetween(st.geometry.location, s.location);
+            if (dd < bestDist) { bestDist = dd; bestIdx = i; }
+          });
+          stops[bestIdx].candidates.push(st);
+        });
+        stops.forEach((s: any) => { s.candidates.sort((a: any, b: any) => stationScore(b) - stationScore(a)); });
+
+        setStations(knownStations);
         setPlannedStops(stops);
+        setSelectedStops(stops.map(() => null)); // เริ่มต้นทุกจุด = อัตโนมัติ
         
         if (!isDrivingRef.current) {
           const bounds = new google.maps.LatLngBounds();
@@ -1257,6 +1306,11 @@ function MapView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [geo.lat, geo.lng, geo.ready, isDriving, nextStopIndex]);
 
+  // ปั๊มที่จะใช้จริงของแต่ละจุด: ที่เลือกเอง หรือเลือกอัตโนมัติให้
+  const resolvedStops: (any | null)[] = plannedStops.map((stop: any, i: number) =>
+    selectedStops[i] ?? pickBestStation(stop.candidates)
+  );
+
   const openInGoogleMaps = () => {
     if (!directionsRenderer) return;
     const dirs = directionsRenderer.getDirections();
@@ -1265,11 +1319,15 @@ function MapView({
     const route = dirs.routes[0].legs[0];
     const originStr = encodeURIComponent(route.start_address);
     const destinationStr = encodeURIComponent(route.end_address);
-    
+
     let url = `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destinationStr}`;
-    
-    if (selectedStation) {
-      url += `&waypoints=${encodeURIComponent(`${selectedStation.geometry.location.lat()},${selectedStation.geometry.location.lng()}`)}`;
+
+    // แทรกปั๊มที่เลือก/เลือกอัตโนมัติของทุกจุดเป็น waypoints ตามลำดับ
+    const waypoints = resolvedStops
+      .filter(Boolean)
+      .map((s: any) => `${s.geometry.location.lat()},${s.geometry.location.lng()}`);
+    if (waypoints.length > 0) {
+      url += `&waypoints=${encodeURIComponent(waypoints.join('|'))}`;
     }
 
     window.open(url, '_blank');
@@ -1645,19 +1703,14 @@ function MapView({
                         </p>
                       </div>
                     )}
-                    {selectedStation && (
-                      <div className="pt-3 border-t border-secondary/20">
-                        <p className="text-[12px] font-black text-primary truncate">{selectedStation.name}</p>
-                        <Badge className="bg-primary text-white text-[9px] mt-1">เลือกแล้ว</Badge>
-                      </div>
-                    )}
                   </div>
 
-                  {stations.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-2 px-2">
+                  {/* โหมดนำทาง: เลือกปั๊มของแต่ละจุด (1/2/3) แล้วกดนำทางผ่าน Google Maps */}
+                  {plannedStops.length > 0 && (
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between gap-2 px-1">
                         <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">
-                          ตัวเลือกสถานี {visibleStations.length}/{stations.length} แห่ง (รัศมี {searchRadiusKm} กม.)
+                          เลือกปั๊มแต่ละจุด (โหมดนำทาง)
                         </p>
                         <button
                           onClick={() => setShowAllSides(v => !v)}
@@ -1668,61 +1721,105 @@ function MapView({
                               : "bg-primary/10 text-primary border-primary/30"
                           )}
                         >
-                          {showAllSides ? 'แสดงทั้งหมด' : 'เฉพาะฝั่งเดินทาง'}
+                          {showAllSides ? 'ทุกฝั่ง' : 'เฉพาะฝั่งเดินทาง'}
                         </button>
                       </div>
-                      {!showAllSides && hiddenSideCount > 0 && (
-                        <p className="text-[9px] text-muted-foreground italic px-2">
-                          ซ่อนสถานีฝั่งตรงข้าม {hiddenSideCount} แห่ง — กด “แสดงทั้งหมด” เพื่อดู
-                        </p>
-                      )}
-                      <ScrollArea className="h-[200px] rounded-2xl border border-border/50 p-2">
-                        <div className="space-y-2">
-                          {visibleStations.map((s, idx) => {
-                            const net = matchStationNetwork(s.name) ?? UNKNOWN_NETWORK;
-                            return (
+
+                      {plannedStops.map((stop: any, i: number) => {
+                        const chosen = selectedStops[i] ?? pickBestStation(stop.candidates);
+                        const isAuto = !selectedStops[i];
+                        const sideCands = showAllSides
+                          ? stop.candidates
+                          : (stop.candidates ?? []).filter((s: any) => !s.side || s.side === DRIVER_SIDE);
+                        const list = sideCands.length > 0 ? sideCands : (stop.candidates ?? []);
+                        const isOpen = expandedStop === i;
+                        const chosenNet = chosen ? (matchStationNetwork(chosen.name) ?? UNKNOWN_NETWORK) : null;
+                        return (
+                          <div key={i} className="rounded-2xl border border-border/50 overflow-hidden bg-white dark:bg-card">
                             <button
-                              key={s.place_id || idx}
-                              onClick={() => selectStation(s)}
-                              className={cn(
-                                "w-full text-left p-3 rounded-xl transition-all border flex gap-2.5 items-center",
-                                selectedStation?.place_id === s.place_id
-                                  ? "bg-primary/5 border-primary/20 shadow-sm"
-                                  : "bg-white dark:bg-card border-transparent hover:bg-muted/30"
-                              )}
+                              onClick={() => setExpandedStop(isOpen ? null : i)}
+                              className="w-full p-3 flex items-center gap-2.5 text-left hover:bg-muted/30 transition-colors"
                             >
-                              {s.photos?.[0] ? (
-                                <img
-                                  src={s.photos[0].getUrl({ maxWidth: 80, maxHeight: 80 })}
-                                  alt={s.name}
-                                  className="w-11 h-11 rounded-lg object-cover shrink-0"
-                                />
-                              ) : (
-                                <div className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: net.color }}>
-                                  <Zap className="w-5 h-5 text-white fill-white" />
-                                </div>
-                              )}
+                              <div className="bg-secondary text-white w-7 h-7 rounded-full flex items-center justify-center font-black text-xs shrink-0">{i + 1}</div>
                               <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-[8px] font-black text-white rounded px-1 py-0.5 shrink-0" style={{ backgroundColor: net.color }}>{net.short}</span>
-                                  <p className="text-[11px] font-bold text-foreground truncate">{s.name}</p>
-                                </div>
-                                <p className="text-[9px] text-muted-foreground truncate">{s.vicinity}</p>
-                                <div className="flex items-center gap-2 mt-0.5 text-[9px]">
-                                  <StationRating rating={s.rating} total={s.user_ratings_total} />
-                                  {getOpenStatus(s) !== undefined && (
-                                    <span className={cn("font-bold flex items-center gap-0.5", getOpenStatus(s) ? "text-green-600" : "text-red-500")}>
-                                      <CircleDot className="w-2.5 h-2.5" />
-                                      {getOpenStatus(s) ? "เปิด" : "ปิด"}
-                                    </span>
-                                  )}
-                                </div>
+                                <p className="text-[11px] font-black text-foreground">
+                                  จุดที่ {i + 1}
+                                  <span className="text-[9px] font-bold text-muted-foreground"> · {stop.atKm} กม.{stop.etaTs ? ` · ${formatClock(stop.etaTs)}` : ''}</span>
+                                </p>
+                                {chosen ? (
+                                  <div className="flex items-center gap-1 mt-0.5">
+                                    {chosenNet && <span className="text-[8px] font-black text-white rounded px-1 py-0.5 shrink-0" style={{ backgroundColor: chosenNet.color }}>{chosenNet.short}</span>}
+                                    <p className="text-[10px] font-bold text-primary truncate">{chosen.name}</p>
+                                    <span className={cn("text-[8px] font-black px-1 rounded shrink-0", isAuto ? "text-amber-600 bg-amber-500/10" : "text-green-600 bg-green-500/10")}>{isAuto ? 'อัตโนมัติ' : 'เลือกเอง'}</span>
+                                  </div>
+                                ) : (
+                                  <p className="text-[10px] font-bold text-red-500 mt-0.5">ไม่พบปั๊มใกล้จุดนี้</p>
+                                )}
                               </div>
+                              <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform shrink-0", isOpen && "rotate-180")} />
                             </button>
-                            );
-                          })}
-                        </div>
-                      </ScrollArea>
+
+                            {isOpen && list.length > 0 && (
+                              <ScrollArea className="h-[180px] border-t border-border/40 p-2">
+                                <div className="space-y-1.5">
+                                  {list.map((s: any, idx: number) => {
+                                    const net = matchStationNetwork(s.name) ?? UNKNOWN_NETWORK;
+                                    const picked = chosen?.place_id === s.place_id;
+                                    return (
+                                      <button
+                                        key={s.place_id || idx}
+                                        onClick={() => chooseStationForStop(i, s)}
+                                        className={cn(
+                                          "w-full text-left p-2.5 rounded-xl transition-all border flex gap-2 items-center",
+                                          picked ? "bg-primary/5 border-primary/30 shadow-sm" : "bg-muted/20 border-transparent hover:bg-muted/40"
+                                        )}
+                                      >
+                                        {s.photos?.[0] ? (
+                                          <img src={s.photos[0].getUrl({ maxWidth: 80, maxHeight: 80 })} alt={s.name} className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                                        ) : (
+                                          <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: net.color }}>
+                                            <Zap className="w-4 h-4 text-white fill-white" />
+                                          </div>
+                                        )}
+                                        <div className="min-w-0 flex-1">
+                                          <div className="flex items-center gap-1.5">
+                                            <span className="text-[8px] font-black text-white rounded px-1 py-0.5 shrink-0" style={{ backgroundColor: net.color }}>{net.short}</span>
+                                            <p className="text-[11px] font-bold text-foreground truncate">{s.name}</p>
+                                          </div>
+                                          <p className="text-[9px] text-muted-foreground truncate">{s.vicinity}</p>
+                                          <div className="flex items-center gap-2 mt-0.5 text-[9px]">
+                                            <StationRating rating={s.rating} total={s.user_ratings_total} />
+                                            {!s.side || s.side === DRIVER_SIDE ? (
+                                              <span className="font-bold text-green-600">ฝั่งเดินทาง</span>
+                                            ) : (
+                                              <span className="font-bold text-muted-foreground">ฝั่งตรงข้าม</span>
+                                            )}
+                                            {getOpenStatus(s) !== undefined && (
+                                              <span className={cn("font-bold flex items-center gap-0.5", getOpenStatus(s) ? "text-green-600" : "text-red-500")}>
+                                                <CircleDot className="w-2.5 h-2.5" />
+                                                {getOpenStatus(s) ? "เปิด" : "ปิด"}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                        {picked && <Check className="w-4 h-4 text-primary shrink-0" />}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </ScrollArea>
+                            )}
+                            {isOpen && selectedStops[i] && (
+                              <button
+                                onClick={() => chooseStationForStop(i, null)}
+                                className="w-full text-[10px] font-bold text-muted-foreground py-2 border-t border-border/40 hover:bg-muted/30 transition-colors"
+                              >
+                                ↺ กลับไปใช้ปั๊มอัตโนมัติ
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -1771,7 +1868,11 @@ function MapView({
                 className="w-full bg-secondary hover:bg-secondary/90 text-white rounded-2xl h-14 font-black shadow-lg transition-all flex items-center justify-center gap-3 group"
               >
                 <MapIcon className="w-5 h-5" />
-                <span>นำทางผ่าน Google Maps</span>
+                <span>
+                  {plannedStops.length > 0
+                    ? `นำทางผ่าน ${resolvedStops.filter(Boolean).length} ปั๊ม (Google Maps)`
+                    : 'นำทางผ่าน Google Maps'}
+                </span>
                 <ChevronRight className="w-4.5 h-4.5 group-hover:translate-x-1 transition-transform" />
               </Button>
             </CardContent>
