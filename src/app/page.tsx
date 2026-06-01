@@ -19,6 +19,13 @@ import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Battery, 
@@ -38,15 +45,60 @@ import {
   Star,
   ArrowRight,
   Loader2,
-  GripVertical
+  GripVertical,
+  Phone,
+  Globe,
+  Timer,
+  Coins,
+  Gauge,
+  CircleDot
 } from 'lucide-react';
-import { CHARGING_NETWORKS, DEFAULT_SEARCH_KEYWORDS } from '@/lib/constants';
+import {
+  CHARGING_NETWORKS,
+  DEFAULT_SEARCH_KEYWORDS,
+  VEHICLE_MODELS,
+  DEFAULT_PRICE_PER_KWH,
+  DEFAULT_TARGET_CHARGE,
+} from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PIl-0fyiz40tHHH8Hnk";
 
 // EPA Efficiency Factor
-const EPA_FACTOR = 0.85; 
+const EPA_FACTOR = 0.85;
+
+// แปลงนาทีเป็นข้อความ เช่น "1 ชม. 20 นาที"
+function formatMinutes(min: number): string {
+  if (min <= 0) return '0 นาที';
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m} นาที`;
+  if (m === 0) return `${h} ชม.`;
+  return `${h} ชม. ${m} นาที`;
+}
+
+// ตรวจสถานะเปิด/ปิดของสถานี (รองรับทั้ง isOpen() และ open_now แบบเดิม)
+function getOpenStatus(station: any): boolean | undefined {
+  const oh = station?.opening_hours;
+  if (!oh) return undefined;
+  try {
+    if (typeof oh.isOpen === 'function') return oh.isOpen();
+  } catch { /* ignore */ }
+  if (typeof oh.open_now === 'boolean') return oh.open_now;
+  return undefined;
+}
+
+// แสดงดาวเรตติ้งของสถานี
+function StationRating({ rating, total }: { rating?: number; total?: number }) {
+  if (!rating) return null;
+  return (
+    <span className="inline-flex items-center gap-1 text-amber-500 font-bold tabular-nums">
+      <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+      {rating.toFixed(1)}
+      {total ? <span className="text-muted-foreground font-medium">({total})</span> : null}
+    </span>
+  );
+}
 
 export default function ChargeWayApp() {
   const [tripData, setTripData] = useState<any>(null);
@@ -123,10 +175,22 @@ function TripForm({
 }) {
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
-  const [fullRange, setFullRange] = useState(410);
+  const [vehicleId, setVehicleId] = useState(VEHICLE_MODELS[0].id);
+  const [fullRange, setFullRange] = useState(VEHICLE_MODELS[0].rangeKm);
   const [minBatteryThreshold, setMinBatteryThreshold] = useState(15);
+  const [targetCharge, setTargetCharge] = useState(DEFAULT_TARGET_CHARGE);
+  const [searchRadius, setSearchRadius] = useState(20); // กม.
+  const [pricePerKwh, setPricePerKwh] = useState(DEFAULT_PRICE_PER_KWH);
   const [selectedNetworks, setSelectedNetworks] = useState<string[]>(CHARGING_NETWORKS.map(n => n.id));
   const [isLocating, setIsLocating] = useState(false);
+
+  const selectedVehicle = VEHICLE_MODELS.find(v => v.id === vehicleId) ?? VEHICLE_MODELS[0];
+
+  const handleVehicleChange = (id: string) => {
+    setVehicleId(id);
+    const v = VEHICLE_MODELS.find(m => m.id === id);
+    if (v && id !== 'custom') setFullRange(v.rangeKm);
+  };
   
   const originInputRef = useRef<HTMLInputElement>(null);
   const destinationInputRef = useRef<HTMLInputElement>(null);
@@ -215,12 +279,18 @@ function TripForm({
 
   const handlePlanTrip = () => {
     if (!origin || !destination) return;
-    onPlanTrip({ 
-      origin, 
-      destination, 
+    onPlanTrip({
+      origin,
+      destination,
       fullRange,
-      minBatteryThreshold, 
-      selectedNetworks 
+      minBatteryThreshold,
+      selectedNetworks,
+      vehicleName: selectedVehicle.name,
+      batteryKwh: selectedVehicle.batteryKwh,
+      chargingKw: selectedVehicle.maxDcKw,
+      targetCharge,
+      searchRadius,
+      pricePerKwh,
     });
   };
 
@@ -298,20 +368,50 @@ function TripForm({
           <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">การตั้งค่าพลังงาน (EPA Standard)</h2>
         </div>
 
+        <div className="space-y-3 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40">
+          <Label className="flex items-center gap-2.5 text-sm font-bold text-foreground/80">
+            <div className="p-1.5 bg-primary/10 rounded-lg text-primary">
+              <Car className="w-4 h-4" />
+            </div>
+            เลือกรุ่นรถ EV
+          </Label>
+          <Select value={vehicleId} onValueChange={handleVehicleChange}>
+            <SelectTrigger className="h-12 rounded-2xl bg-background/50 font-bold text-sm">
+              <SelectValue placeholder="เลือกรุ่นรถ" />
+            </SelectTrigger>
+            <SelectContent className="rounded-2xl">
+              {VEHICLE_MODELS.map(v => (
+                <SelectItem key={v.id} value={v.id} className="font-medium">
+                  {v.name}
+                  {v.id !== 'custom' && (
+                    <span className="text-muted-foreground"> · {v.rangeKm} กม. · {v.batteryKwh} kWh</span>
+                  )}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {vehicleId !== 'custom' && (
+            <div className="flex items-center gap-3 text-[11px] font-bold text-muted-foreground pt-1">
+              <span className="flex items-center gap-1"><Battery className="w-3.5 h-3.5 text-secondary" /> {selectedVehicle.batteryKwh} kWh</span>
+              <span className="flex items-center gap-1"><Gauge className="w-3.5 h-3.5 text-secondary" /> ~{selectedVehicle.maxDcKw} kW DC</span>
+            </div>
+          )}
+        </div>
+
         <div className="space-y-5 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
           <div className="flex justify-between items-center">
             <Label className="flex items-center gap-2.5 text-sm font-bold text-foreground/80">
               <div className="p-1.5 bg-primary/10 rounded-lg text-primary">
                 <Car className="w-4 h-4" />
-              </div> 
+              </div>
               ระยะทางวิ่งสูงสุด (แบต 100%)
             </Label>
             <span className="text-sm font-black text-primary bg-primary/10 px-3 py-1 rounded-xl tabular-nums">{fullRange} กม.</span>
           </div>
-          <Slider 
-            value={[fullRange]} 
-            onValueChange={v => setFullRange(v[0])} 
-            max={1000} 
+          <Slider
+            value={[fullRange]}
+            onValueChange={v => { setFullRange(v[0]); setVehicleId('custom'); }}
+            max={1000}
             step={10}
             className="py-1 cursor-pointer"
           />
@@ -349,6 +449,60 @@ function TripForm({
                 <span className="text-sm font-black text-green-600 tabular-nums">{usableRange} กม.</span>
                 <span className="text-[10px] font-bold text-muted-foreground italic">/ ชาร์จ</span>
              </div>
+          </div>
+        </div>
+
+        <div className="space-y-5 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
+          <div className="flex justify-between items-center">
+            <Label className="flex items-center gap-2.5 text-sm font-bold text-foreground/80">
+              <div className="p-1.5 bg-secondary/10 rounded-lg text-secondary">
+                <Battery className="w-4 h-4" />
+              </div>
+              ชาร์จกลับถึง (เป้าหมาย %)
+            </Label>
+            <span className="text-sm font-black text-secondary bg-secondary/10 px-3 py-1 rounded-xl tabular-nums">{targetCharge}%</span>
+          </div>
+          <Slider
+            value={[targetCharge]}
+            onValueChange={v => setTargetCharge(v[0])}
+            max={100}
+            min={50}
+            step={5}
+            className="py-1 cursor-pointer"
+          />
+        </div>
+
+        <div className="space-y-5 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
+          <div className="flex justify-between items-center">
+            <Label className="flex items-center gap-2.5 text-sm font-bold text-foreground/80">
+              <div className="p-1.5 bg-primary/10 rounded-lg text-primary">
+                <Target className="w-4 h-4" />
+              </div>
+              รัศมีค้นหาสถานี
+            </Label>
+            <span className="text-sm font-black text-primary bg-primary/10 px-3 py-1 rounded-xl tabular-nums">{searchRadius} กม.</span>
+          </div>
+          <Slider
+            value={[searchRadius]}
+            onValueChange={v => setSearchRadius(v[0])}
+            max={50}
+            min={5}
+            step={1}
+            className="py-1 cursor-pointer"
+          />
+          <div className="flex items-center justify-between pt-2 border-t border-border/40">
+            <Label className="flex items-center gap-2 text-[12px] font-bold text-muted-foreground">
+              <Coins className="w-4 h-4 text-amber-500" />
+              ค่าไฟ (บาท/kWh)
+            </Label>
+            <Input
+              type="number"
+              value={pricePerKwh}
+              onChange={e => setPricePerKwh(Number(e.target.value))}
+              step={0.5}
+              min={0}
+              className="w-24 h-9 rounded-xl text-right font-black text-primary tabular-nums"
+            />
           </div>
         </div>
       </section>
@@ -407,6 +561,32 @@ function MapView({
   const [routeInfo, setRouteInfo] = useState<{distance: string, duration: string, distanceKm: number} | null>(null);
   const [selectedStation, setSelectedStation] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [searchRadiusKm, setSearchRadiusKm] = useState(20);
+  const [chargeStats, setChargeStats] = useState<{
+    perStopKwh: number;
+    perStopMin: number;
+    perStopCost: number;
+    totalMin: number;
+    totalCost: number;
+  } | null>(null);
+
+  // ดึงรายละเอียดเพิ่มเติมของสถานีที่เลือก (เบอร์โทร/เว็บไซต์/เวลาเปิด)
+  const selectStation = useCallback((station: any) => {
+    setSelectedStation(station);
+    map?.panTo(station.geometry.location);
+    if (!placesLib || !map || station.formatted_phone_number || station.website) return;
+    const service = new google.maps.places.PlacesService(map);
+    service.getDetails(
+      { placeId: station.place_id, fields: ['formatted_phone_number', 'website', 'opening_hours', 'rating', 'user_ratings_total', 'url'] },
+      (details, status) => {
+        if (status === google.maps.places.PlacesServiceStatus.OK && details) {
+          setSelectedStation((prev: any) =>
+            prev && prev.place_id === station.place_id ? { ...prev, ...details } : prev
+          );
+        }
+      }
+    );
+  }, [placesLib, map]);
 
   useEffect(() => {
     if (!routesLib || !map) return;
@@ -437,9 +617,9 @@ function MapView({
     });
   }, [isPickingOnMap, geocodingLib, setIsPickingOnMap]);
 
-  const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng, networks: string[]) => {
+  const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng, networks: string[], radiusKm: number = 20) => {
     if (!placesLib || !map) return [];
-    
+
     const service = new google.maps.places.PlacesService(map);
     const searchKeywords: string[] = [];
 
@@ -457,7 +637,7 @@ function MapView({
       return new Promise<any[]>((resolve) => {
         service.nearbySearch({
           location,
-          radius: 20000, 
+          radius: radiusKm * 1000,
           keyword,
           type: 'car_charging_station'
         }, (results, status) => {
@@ -486,7 +666,12 @@ function MapView({
     
     const calculateRoute = async () => {
       setIsLoading(true);
-      const { origin, destination, fullRange, minBatteryThreshold, selectedNetworks } = tripData;
+      const {
+        origin, destination, fullRange, minBatteryThreshold, selectedNetworks,
+        batteryKwh = 60, chargingKw = 60, targetCharge = 80,
+        searchRadius = 20, pricePerKwh = 7.5,
+      } = tripData;
+      setSearchRadiusKm(searchRadius);
       const directionsService = new google.maps.DirectionsService();
       
       try {
@@ -508,6 +693,7 @@ function MapView({
         setStations([]);
         setPlannedStops([]);
         setSelectedStation(null);
+        setChargeStats(null);
 
         const actualEpaRange = fullRange * EPA_FACTOR;
         const usableRangePerCharge = actualEpaRange * (1 - minBatteryThreshold / 100);
@@ -526,10 +712,25 @@ function MapView({
           if (currentSegmentDist >= usableRangePerCharge) {
             const stopLoc = path[i+1];
             stops.push({ location: stopLoc, atKm: Math.round(cumulativeDist) });
-            const found = await searchStationsAtLocation(stopLoc, selectedNetworks);
+            const found = await searchStationsAtLocation(stopLoc, selectedNetworks, searchRadius);
             allFoundStations.push(...found);
-            currentSegmentDist = 0; 
+            currentSegmentDist = 0;
           }
+        }
+
+        // คำนวณเวลาชาร์จ + ค่าไฟต่อจุด และรวมทั้งทริป
+        if (stops.length > 0) {
+          const chargePercent = Math.max(0, targetCharge - minBatteryThreshold) / 100;
+          const perStopKwh = batteryKwh * chargePercent;
+          const perStopMin = chargingKw > 0 ? (perStopKwh / chargingKw) * 60 : 0;
+          const perStopCost = perStopKwh * pricePerKwh;
+          setChargeStats({
+            perStopKwh: Math.round(perStopKwh * 10) / 10,
+            perStopMin: Math.round(perStopMin),
+            perStopCost: Math.round(perStopCost),
+            totalMin: Math.round(perStopMin * stops.length),
+            totalCost: Math.round(perStopCost * stops.length),
+          });
         }
 
         const finalUniqueMap = new window.Map();
@@ -599,10 +800,7 @@ function MapView({
               key={station.place_id || i}
               position={station.geometry.location}
               title={station.name}
-              onClick={() => {
-                setSelectedStation(station);
-                map?.panTo(station.geometry.location);
-              }}
+              onClick={() => selectStation(station)}
             >
               <Pin 
                 background={selectedStation?.place_id === station.place_id ? '#FF5722' : '#1F8C8C'} 
@@ -620,15 +818,46 @@ function MapView({
               position={selectedStation.geometry.location}
               onCloseClick={() => setSelectedStation(null)}
             >
-              <div className="p-2 min-w-[200px]">
+              <div className="p-2 min-w-[220px] max-w-[260px]">
+                {selectedStation.photos?.[0] && (
+                  <img
+                    src={selectedStation.photos[0].getUrl({ maxWidth: 320, maxHeight: 140 })}
+                    alt={selectedStation.name}
+                    className="w-full h-24 object-cover rounded-lg mb-2"
+                  />
+                )}
                 <h3 className="font-black text-sm text-primary mb-1">{selectedStation.name}</h3>
+                <div className="flex items-center gap-2 mb-1 text-[11px]">
+                  <StationRating rating={selectedStation.rating} total={selectedStation.user_ratings_total} />
+                  {getOpenStatus(selectedStation) !== undefined && (
+                    <span className={cn("font-bold", getOpenStatus(selectedStation) ? "text-green-600" : "text-red-500")}>
+                      {getOpenStatus(selectedStation) ? "เปิดอยู่" : "ปิดอยู่"}
+                    </span>
+                  )}
+                </div>
                 <p className="text-[11px] text-muted-foreground leading-snug mb-2">{selectedStation.vicinity}</p>
-                <Button 
-                  size="sm" 
-                  className="w-full mt-3 h-8 text-[10px] font-bold rounded-xl"
-                  onClick={() => setSelectedStation(selectedStation)}
+                <div className="flex gap-2 mt-2">
+                  {selectedStation.formatted_phone_number && (
+                    <a href={`tel:${selectedStation.formatted_phone_number}`} className="flex-1">
+                      <Button size="sm" variant="outline" className="w-full h-8 text-[10px] font-bold rounded-xl gap-1">
+                        <Phone className="w-3.5 h-3.5" /> โทร
+                      </Button>
+                    </a>
+                  )}
+                  {selectedStation.website && (
+                    <a href={selectedStation.website} target="_blank" rel="noopener noreferrer" className="flex-1">
+                      <Button size="sm" variant="outline" className="w-full h-8 text-[10px] font-bold rounded-xl gap-1">
+                        <Globe className="w-3.5 h-3.5" /> เว็บไซต์
+                      </Button>
+                    </a>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  className="w-full mt-2 h-8 text-[10px] font-bold rounded-xl gap-1"
+                  onClick={openInGoogleMaps}
                 >
-                  เลือกสถานีนี้
+                  <Navigation className="w-3.5 h-3.5" /> นำทางผ่านสถานีนี้
                 </Button>
               </div>
             </InfoWindow>
@@ -669,9 +898,31 @@ function MapView({
                       </div>
                       <div>
                         <p className="text-sm font-black text-secondary">ต้องแวะชาร์จ {plannedStops.length} ครั้ง</p>
-                        <p className="text-[11px] font-bold text-muted-foreground">รัศมี 20 กม. รอบจุดแบตเตอรี่ต่ำ</p>
+                        <p className="text-[11px] font-bold text-muted-foreground">รัศมี {searchRadiusKm} กม. รอบจุดแบตเตอรี่ต่ำ</p>
                       </div>
                     </div>
+
+                    {chargeStats && (
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <div className="bg-white/60 rounded-xl p-3 flex items-center gap-2">
+                          <Timer className="w-4 h-4 text-secondary shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-[9px] font-black text-muted-foreground uppercase">เวลาชาร์จรวม</p>
+                            <p className="text-[13px] font-black text-secondary truncate">{formatMinutes(chargeStats.totalMin)}</p>
+                          </div>
+                        </div>
+                        <div className="bg-white/60 rounded-xl p-3 flex items-center gap-2">
+                          <Coins className="w-4 h-4 text-amber-500 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-[9px] font-black text-muted-foreground uppercase">ค่าไฟรวม</p>
+                            <p className="text-[13px] font-black text-amber-600 truncate tabular-nums">~{chargeStats.totalCost.toLocaleString()} ฿</p>
+                          </div>
+                        </div>
+                        <p className="col-span-2 text-[10px] font-medium text-muted-foreground text-center">
+                          ต่อจุด ~{chargeStats.perStopKwh} kWh · {formatMinutes(chargeStats.perStopMin)} · ~{chargeStats.perStopCost.toLocaleString()} ฿
+                        </p>
+                      </div>
+                    )}
                     {selectedStation && (
                       <div className="pt-3 border-t border-secondary/20">
                         <p className="text-[12px] font-black text-primary truncate">{selectedStation.name}</p>
@@ -682,25 +933,44 @@ function MapView({
 
                   {stations.length > 0 && (
                     <div className="space-y-2">
-                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">ตัวเลือกสถานี (รัศมี 20 กม.)</p>
+                      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">ตัวเลือกสถานี {stations.length} แห่ง (รัศมี {searchRadiusKm} กม.)</p>
                       <ScrollArea className="h-[200px] rounded-2xl border border-border/50 p-2">
                         <div className="space-y-2">
                           {stations.map((s, idx) => (
                             <button
                               key={s.place_id || idx}
-                              onClick={() => {
-                                setSelectedStation(s);
-                                map?.panTo(s.geometry.location);
-                              }}
+                              onClick={() => selectStation(s)}
                               className={cn(
-                                "w-full text-left p-3 rounded-xl transition-all border",
-                                selectedStation?.place_id === s.place_id 
-                                  ? "bg-primary/5 border-primary/20 shadow-sm" 
+                                "w-full text-left p-3 rounded-xl transition-all border flex gap-2.5 items-center",
+                                selectedStation?.place_id === s.place_id
+                                  ? "bg-primary/5 border-primary/20 shadow-sm"
                                   : "bg-white border-transparent hover:bg-muted/30"
                               )}
                             >
-                              <p className="text-[11px] font-bold text-foreground truncate">{s.name}</p>
-                              <p className="text-[9px] text-muted-foreground truncate">{s.vicinity}</p>
+                              {s.photos?.[0] ? (
+                                <img
+                                  src={s.photos[0].getUrl({ maxWidth: 80, maxHeight: 80 })}
+                                  alt={s.name}
+                                  className="w-11 h-11 rounded-lg object-cover shrink-0"
+                                />
+                              ) : (
+                                <div className="w-11 h-11 rounded-lg bg-secondary/10 flex items-center justify-center shrink-0">
+                                  <Zap className="w-5 h-5 text-secondary" />
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[11px] font-bold text-foreground truncate">{s.name}</p>
+                                <p className="text-[9px] text-muted-foreground truncate">{s.vicinity}</p>
+                                <div className="flex items-center gap-2 mt-0.5 text-[9px]">
+                                  <StationRating rating={s.rating} total={s.user_ratings_total} />
+                                  {getOpenStatus(s) !== undefined && (
+                                    <span className={cn("font-bold flex items-center gap-0.5", getOpenStatus(s) ? "text-green-600" : "text-red-500")}>
+                                      <CircleDot className="w-2.5 h-2.5" />
+                                      {getOpenStatus(s) ? "เปิด" : "ปิด"}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
                             </button>
                           ))}
                         </div>
