@@ -32,15 +32,46 @@ export interface VehicleModel {
 }
 
 export const VEHICLE_MODELS: VehicleModel[] = [
+  // ===== BYD =====
   { id: 'atto3',    name: 'BYD ATTO 3 (Standard)', rangeKm: 410, standard: 'NEDC', batteryKwh: 49.9, maxDcKw: 80 },
   { id: 'atto3ext', name: 'BYD ATTO 3 Extended',   rangeKm: 480, standard: 'NEDC', batteryKwh: 60.5, maxDcKw: 88 },
   { id: 'dolphin',  name: 'BYD Dolphin',           rangeKm: 410, standard: 'NEDC', batteryKwh: 44.9, maxDcKw: 60 },
   { id: 'seal',     name: 'BYD Seal Extended',     rangeKm: 650, standard: 'NEDC', batteryKwh: 82.5, maxDcKw: 150 },
+  { id: 'sealion7', name: 'BYD Sealion 7',         rangeKm: 567, standard: 'CLTC', batteryKwh: 82.5, maxDcKw: 150 },
+  // ===== Tesla =====
   { id: 'm3',       name: 'Tesla Model 3 RWD',     rangeKm: 513, standard: 'WLTP', batteryKwh: 60,   maxDcKw: 170 },
-  { id: 'my',       name: 'Tesla Model Y RWD',     rangeKm: 455, standard: 'WLTP', batteryKwh: 60,   maxDcKw: 170 },
+  { id: 'my',       name: 'Tesla Model Y RWD',     rangeKm: 455, standard: 'WLTP', batteryKwh: 60,   maxDcKw: 175 },
+  // ===== MG =====
+  { id: 'mg4',      name: 'MG4 Electric',          rangeKm: 425, standard: 'WLTP', batteryKwh: 51,   maxDcKw: 117 },
+  { id: 'mgs5',     name: 'MG S5 EV (64kWh)',      rangeKm: 480, standard: 'CLTC', batteryKwh: 64,   maxDcKw: 140 },
+  { id: 'mgep',     name: 'MG EP (Wagon)',         rangeKm: 380, standard: 'NEDC', batteryKwh: 50.3, maxDcKw: 76 },
+  // ===== GAC AION =====
+  { id: 'aionyplus',name: 'GAC AION Y Plus',       rangeKm: 490, standard: 'NEDC', batteryKwh: 63.2, maxDcKw: 90 },
+  { id: 'aionv',    name: 'GAC AION V',            rangeKm: 600, standard: 'CLTC', batteryKwh: 75,   maxDcKw: 180 },
+  // ===== Deepal =====
+  { id: 'deepals07',name: 'Deepal S07 EV',         rangeKm: 530, standard: 'CLTC', batteryKwh: 79.97,maxDcKw: 92 },
+  { id: 'deepals05',name: 'Deepal S05 EV',         rangeKm: 515, standard: 'CLTC', batteryKwh: 56,   maxDcKw: 92 },
+  // ===== JAECOO =====
+  { id: 'jaecoo6',  name: 'JAECOO 6 EV',           rangeKm: 501, standard: 'CLTC', batteryKwh: 60,   maxDcKw: 80 },
+  // ===== XPENG =====
+  { id: 'xpengg6',  name: 'XPENG G6 (Long Range)', rangeKm: 755, standard: 'CLTC', batteryKwh: 87.5, maxDcKw: 215 },
+  // ===== Zeekr =====
+  { id: 'zeekrx',   name: 'Zeekr X',               rangeKm: 560, standard: 'CLTC', batteryKwh: 66,   maxDcKw: 150 },
+  { id: 'zeekr7x',  name: 'Zeekr 7X',              rangeKm: 615, standard: 'CLTC', batteryKwh: 75,   maxDcKw: 360 },
+  // ===== GWM / ORA & NETA =====
   { id: 'goodcat',  name: 'ORA Good Cat (Tech)',   rangeKm: 401, standard: 'NEDC', batteryKwh: 47.8, maxDcKw: 64 },
   { id: 'netav',    name: 'NETA V',                rangeKm: 384, standard: 'NEDC', batteryKwh: 38.5, maxDcKw: 55 },
-  { id: 'mg4',      name: 'MG4 Electric',          rangeKm: 425, standard: 'WLTP', batteryKwh: 51,   maxDcKw: 117 },
+  // ===== Volvo =====
+  { id: 'volvoex30',name: 'Volvo EX30',            rangeKm: 476, standard: 'WLTP', batteryKwh: 64,   maxDcKw: 153 },
+  { id: 'volvoex40',name: 'Volvo EX40',            rangeKm: 460, standard: 'WLTP', batteryKwh: 78,   maxDcKw: 200 },
+  // ===== BMW =====
+  { id: 'bmwix1',   name: 'BMW iX1 eDrive20',      rangeKm: 440, standard: 'WLTP', batteryKwh: 64.7, maxDcKw: 130 },
+  { id: 'bmwi4',    name: 'BMW i4 eDrive40',       rangeKm: 590, standard: 'WLTP', batteryKwh: 83.9, maxDcKw: 205 },
+  // ===== ญี่ปุ่น =====
+  { id: 'hondaen1', name: 'Honda e:N1',            rangeKm: 412, standard: 'WLTP', batteryKwh: 68.8, maxDcKw: 78 },
+  { id: 'bz4x',     name: 'Toyota bZ4X',           rangeKm: 411, standard: 'WLTP', batteryKwh: 71.4, maxDcKw: 150 },
+  { id: 'leaf',     name: 'Nissan Leaf e+',        rangeKm: 385, standard: 'WLTP', batteryKwh: 59,   maxDcKw: 50 },
+  // ===== กำหนดเอง =====
   { id: 'custom',   name: 'กำหนดเอง (Custom)',      rangeKm: 410, standard: 'NEDC', batteryKwh: 60,   maxDcKw: 60 },
 ];
 
