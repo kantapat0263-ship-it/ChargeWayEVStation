@@ -66,6 +66,8 @@ import {
   type TariffMode,
   matchStationNetwork,
   UNKNOWN_NETWORK,
+  connectorLabel,
+  isDcConnector,
 } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
@@ -101,6 +103,47 @@ function StationRating({ rating, total }: { rating?: number; total?: number }) {
       {rating.toFixed(1)}
       {total ? <span className="text-muted-foreground font-medium">({total})</span> : null}
     </span>
+  );
+}
+
+// แสดงข้อมูลหัวชาร์จ: กำลังไฟ (kW), ชนิด (AC/DC), และสถานะว่าง/ไม่ว่าง
+function EvChargeInfo({ ev, compact = false }: { ev: any; compact?: boolean }) {
+  if (!ev || !ev.aggregations?.length) {
+    return <p className="text-[10px] text-muted-foreground italic">ยังไม่มีข้อมูลหัวชาร์จจาก Google</p>;
+  }
+  const aggs = ev.aggregations;
+  const hasAvail = aggs.some((a: any) => a.availableCount != null);
+  const totalAvail = aggs.reduce((s: number, a: any) => s + (a.availableCount ?? 0), 0);
+  const totalCount = ev.connectorCount ?? aggs.reduce((s: number, a: any) => s + (a.count ?? 0), 0);
+
+  return (
+    <div className="space-y-1.5">
+      {hasAvail && (
+        <span className={cn(
+          "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-black",
+          totalAvail > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-600"
+        )}>
+          <CircleDot className="w-2.5 h-2.5" />
+          {totalAvail > 0 ? `ว่าง ${totalAvail}/${totalCount} หัว` : `ไม่ว่าง (0/${totalCount})`}
+        </span>
+      )}
+      <div className="flex flex-wrap gap-1">
+        {aggs.map((a: any, i: number) => {
+          const dc = isDcConnector(a.type, a.maxChargeRateKw ?? 0);
+          return (
+            <span key={i} className={cn(
+              "inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[9px] font-bold border",
+              dc ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-blue-50 text-blue-700 border-blue-200"
+            )}>
+              <Zap className="w-2.5 h-2.5" />
+              {a.maxChargeRateKw ? `${Math.round(a.maxChargeRateKw)}kW ` : ''}
+              {connectorLabel(a.type)} {dc ? 'DC' : 'AC'}
+              {!compact && a.availableCount != null && a.count != null ? ` · ${a.availableCount}/${a.count}` : ''}
+            </span>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -647,6 +690,31 @@ function MapView({
   } | null>(null);
 
   // ดึงรายละเอียดเพิ่มเติมของสถานีที่เลือก (เบอร์โทร/เว็บไซต์/เวลาเปิด)
+  // ดึงข้อมูลหัวชาร์จ (กำลังไฟ/ชนิด/ว่าง-ไม่ว่าง) จาก Places API (New)
+  const fetchEvOptions = useCallback(async (placeId: string) => {
+    if (!placesLib) return null;
+    try {
+      const PlaceClass = (placesLib as any).Place;
+      if (!PlaceClass) return null;
+      const place = new PlaceClass({ id: placeId });
+      await place.fetchFields({ fields: ['evChargeOptions'] });
+      const ev = place.evChargeOptions;
+      if (!ev) return null;
+      return {
+        connectorCount: ev.connectorCount ?? null,
+        aggregations: (ev.connectorAggregations ?? []).map((a: any) => ({
+          type: a.type,
+          maxChargeRateKw: a.maxChargeRateKw ?? null,
+          count: a.count ?? null,
+          availableCount: a.availableCount ?? null,
+          outOfServiceCount: a.outOfServiceCount ?? null,
+        })),
+      };
+    } catch {
+      return null; // สถานีนี้ไม่มีข้อมูล EV หรือ API ไม่รองรับ
+    }
+  }, [placesLib]);
+
   const selectStation = useCallback((station: any) => {
     setSelectedStation(station);
     map?.panTo(station.geometry.location);
@@ -829,11 +897,21 @@ function MapView({
 
         const finalUniqueMap = new window.Map();
         allFoundStations.forEach(res => {
-          if (res.place_id) finalUniqueMap.set(res.place_id, res);
+          // แสดงเฉพาะเครือข่ายที่รู้จัก (ตัดสถานีอื่น ๆ ออก)
+          if (res.place_id && matchStationNetwork(res.name)) finalUniqueMap.set(res.place_id, res);
         });
-        
-        setStations(Array.from(finalUniqueMap.values()));
+
+        const knownStations = Array.from(finalUniqueMap.values());
+        setStations(knownStations);        // แสดงผลทันที
         setPlannedStops(stops);
+
+        // เติมข้อมูลหัวชาร์จ (กำลังไฟ/ชนิด/ว่าง) แบบขนานในเบื้องหลัง
+        Promise.all(
+          knownStations.map(async (st: any) => {
+            const ev = await fetchEvOptions(st.place_id);
+            return ev ? { ...st, evChargeOptions: ev } : st;
+          })
+        ).then(enriched => setStations(enriched)).catch(() => {});
         
         const bounds = new google.maps.LatLngBounds();
         bounds.extend(route.start_location);
@@ -849,7 +927,7 @@ function MapView({
     };
 
     calculateRoute();
-  }, [tripData, routesLib, directionsRenderer, searchStationsAtLocation, map]);
+  }, [tripData, routesLib, directionsRenderer, searchStationsAtLocation, fetchEvOptions, map]);
 
   const openInGoogleMaps = () => {
     if (!directionsRenderer) return;
@@ -892,6 +970,9 @@ function MapView({
           {stations.map((station, i) => {
             const net = matchStationNetwork(station.name) ?? UNKNOWN_NETWORK;
             const isSelected = selectedStation?.place_id === station.place_id;
+            const aggs = station.evChargeOptions?.aggregations;
+            const hasAvail = aggs?.some((a: any) => a.availableCount != null);
+            const avail = aggs?.reduce((t: number, a: any) => t + (a.availableCount ?? 0), 0) ?? 0;
             return (
               <AdvancedMarker
                 key={station.place_id || i}
@@ -909,6 +990,12 @@ function MapView({
                 >
                   <Zap className={cn("fill-white", isSelected ? "w-3.5 h-3.5" : "w-3 h-3")} />
                   <span className={cn("tracking-tight", isSelected ? "text-[11px]" : "text-[10px]")}>{net.short}</span>
+                  {hasAvail && (
+                    <span className={cn(
+                      "w-2 h-2 rounded-full border border-white",
+                      avail > 0 ? "bg-green-400" : "bg-red-400"
+                    )} />
+                  )}
                 </div>
               </AdvancedMarker>
             );
@@ -948,6 +1035,9 @@ function MapView({
                   )}
                 </div>
                 <p className="text-[11px] text-muted-foreground leading-snug mb-2">{selectedStation.vicinity}</p>
+                <div className="mb-2">
+                  <EvChargeInfo ev={selectedStation.evChargeOptions} />
+                </div>
                 <div className="flex gap-2 mt-2">
                   {selectedStation.formatted_phone_number && (
                     <a href={`tel:${selectedStation.formatted_phone_number}`} className="flex-1">
@@ -986,9 +1076,11 @@ function MapView({
                   <span className="text-[9px] font-bold text-foreground/80">{net.short}</span>
                 </div>
               ))}
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-full border border-white shadow" style={{ backgroundColor: UNKNOWN_NETWORK.color }} />
-                <span className="text-[9px] font-bold text-foreground/80">อื่น ๆ</span>
+              <div className="flex items-center gap-2 pt-1 mt-0.5 border-t border-border/40">
+                <span className="w-2.5 h-2.5 rounded-full bg-green-400 border border-white" />
+                <span className="text-[8px] font-bold text-foreground/70">ว่าง</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-red-400 border border-white ml-1" />
+                <span className="text-[8px] font-bold text-foreground/70">ไม่ว่าง</span>
               </div>
             </div>
           </div>
@@ -1057,9 +1149,12 @@ function MapView({
                       </div>
                     )}
                     {selectedStation && (
-                      <div className="pt-3 border-t border-secondary/20">
-                        <p className="text-[12px] font-black text-primary truncate">{selectedStation.name}</p>
-                        <Badge className="bg-primary text-white text-[9px] mt-1">เลือกแล้ว</Badge>
+                      <div className="pt-3 border-t border-secondary/20 space-y-2">
+                        <div>
+                          <p className="text-[12px] font-black text-primary truncate">{selectedStation.name}</p>
+                          <Badge className="bg-primary text-white text-[9px] mt-1">เลือกแล้ว</Badge>
+                        </div>
+                        <EvChargeInfo ev={selectedStation.evChargeOptions} />
                       </div>
                     )}
                   </div>
@@ -1107,6 +1202,27 @@ function MapView({
                                       {getOpenStatus(s) ? "เปิด" : "ปิด"}
                                     </span>
                                   )}
+                                  {(() => {
+                                    const ev = s.evChargeOptions;
+                                    if (!ev?.aggregations?.length) return null;
+                                    const maxKw = Math.max(0, ...ev.aggregations.map((a: any) => a.maxChargeRateKw ?? 0));
+                                    const hasAvail = ev.aggregations.some((a: any) => a.availableCount != null);
+                                    const avail = ev.aggregations.reduce((t: number, a: any) => t + (a.availableCount ?? 0), 0);
+                                    return (
+                                      <>
+                                        {maxKw > 0 && (
+                                          <span className="font-bold text-orange-600 flex items-center gap-0.5">
+                                            <Zap className="w-2.5 h-2.5" />{Math.round(maxKw)}kW
+                                          </span>
+                                        )}
+                                        {hasAvail && (
+                                          <span className={cn("font-bold", avail > 0 ? "text-green-600" : "text-red-500")}>
+                                            {avail > 0 ? `ว่าง ${avail}` : "ไม่ว่าง"}
+                                          </span>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
                                 </div>
                               </div>
                             </button>

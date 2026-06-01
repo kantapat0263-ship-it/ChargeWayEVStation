@@ -140,6 +140,34 @@ export function matchStationNetwork(name?: string): ChargingNetwork | null {
   return CHARGING_NETWORKS.find(net => net.brandMatch.some(m => n.includes(m.toLowerCase()))) ?? null;
 }
 
+// ===== EV Connector helpers (Google Places evChargeOptions) =====
+// แปลงชนิดหัวชาร์จเป็นป้ายอ่านง่าย
+export function connectorLabel(type?: string): string {
+  if (!type) return 'อื่น ๆ';
+  const key = type.replace('EV_CONNECTOR_TYPE_', '');
+  const map: Record<string, string> = {
+    CCS_COMBO_1: 'CCS1',
+    CCS_COMBO_2: 'CCS2',
+    CHADEMO: 'CHAdeMO',
+    J1772: 'J1772',
+    TYPE_2: 'Type 2',
+    TESLA: 'Tesla',
+    TYPE_3C: 'Type 3C',
+    UNSPECIFIED_GB_T: 'GB/T',
+    UNSPECIFIED_WALL_OUTLET: 'ปลั๊กบ้าน',
+    OTHER: 'อื่น ๆ',
+  };
+  return map[key] ?? key.replace(/_/g, ' ');
+}
+
+// เดาว่าหัวชาร์จเป็น DC (ชาร์จเร็ว) หรือ AC จากชนิด + กำลังไฟ
+export function isDcConnector(type?: string, kw = 0): boolean {
+  const key = (type ?? '').replace('EV_CONNECTOR_TYPE_', '');
+  if (['CCS_COMBO_1', 'CCS_COMBO_2', 'CHADEMO', 'TESLA'].includes(key)) return true;
+  if (['TYPE_2', 'J1772', 'TYPE_3C', 'UNSPECIFIED_WALL_OUTLET'].includes(key)) return kw > 22;
+  return kw >= 25;
+}
+
 export const DEFAULT_SEARCH_KEYWORDS = [
   'EV Charging Station',
   'EV Charger',
