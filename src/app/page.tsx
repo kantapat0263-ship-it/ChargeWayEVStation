@@ -679,6 +679,7 @@ function MapView({
   const [selectedStation, setSelectedStation] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [searchRadiusKm, setSearchRadiusKm] = useState(20);
+  const [evApiError, setEvApiError] = useState<string | null>(null);
   const [chargeStats, setChargeStats] = useState<{
     perStopKwh: number;
     perStopMin: number;
@@ -692,14 +693,20 @@ function MapView({
   // ดึงรายละเอียดเพิ่มเติมของสถานีที่เลือก (เบอร์โทร/เว็บไซต์/เวลาเปิด)
   // ดึงข้อมูลหัวชาร์จ (กำลังไฟ/ชนิด/ว่าง-ไม่ว่าง) จาก Places API (New)
   const fetchEvOptions = useCallback(async (placeId: string) => {
-    if (!placesLib) return null;
     try {
-      const PlaceClass = (placesLib as any).Place;
-      if (!PlaceClass) return null;
+      // โหลดคลาส Place ของ Places API (New) — เผื่อ placesLib ยังไม่มี ให้ import ตรง ๆ
+      let PlaceClass = (placesLib as any)?.Place;
+      if (!PlaceClass && (window as any).google?.maps?.importLibrary) {
+        PlaceClass = (await (window as any).google.maps.importLibrary('places')).Place;
+      }
+      if (!PlaceClass) {
+        setEvApiError('โหลดคลาส Place (Places API New) ไม่ได้');
+        return null;
+      }
       const place = new PlaceClass({ id: placeId });
       await place.fetchFields({ fields: ['evChargeOptions'] });
       const ev = place.evChargeOptions;
-      if (!ev) return null;
+      if (!ev) return null; // สถานีนี้ Google ไม่มีข้อมูลหัวชาร์จ
       return {
         connectorCount: ev.connectorCount ?? null,
         aggregations: (ev.connectorAggregations ?? []).map((a: any) => ({
@@ -710,8 +717,11 @@ function MapView({
           outOfServiceCount: a.outOfServiceCount ?? null,
         })),
       };
-    } catch {
-      return null; // สถานีนี้ไม่มีข้อมูล EV หรือ API ไม่รองรับ
+    } catch (e: any) {
+      // มี error จริง (เช่น Places API New ไม่ได้เปิด / billing / สิทธิ์ API key)
+      console.error('[EV] fetchFields(evChargeOptions) failed:', e?.message || e, e);
+      setEvApiError(e?.message ? `Places API (New): ${e.message}` : 'เรียก Places API (New) ไม่สำเร็จ');
+      return null;
     }
   }, [placesLib]);
 
@@ -838,6 +848,7 @@ function MapView({
         setPlannedStops([]);
         setSelectedStation(null);
         setChargeStats(null);
+        setEvApiError(null);
 
         const usableRangePerCharge = epaRange * (1 - minBatteryThreshold / 100);
 
@@ -1158,6 +1169,17 @@ function MapView({
                       </div>
                     )}
                   </div>
+
+                  {evApiError && (
+                    <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-2.5">
+                      <CircleDot className="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-black text-red-600">ดึงข้อมูลหัวชาร์จไม่ได้</p>
+                        <p className="text-[9px] text-red-500 leading-snug break-words">{evApiError}</p>
+                        <p className="text-[9px] text-muted-foreground mt-0.5">ตรวจสอบว่าเปิด “Places API (New)” + เปิด Billing ใน Google Cloud แล้ว</p>
+                      </div>
+                    </div>
+                  )}
 
                   {stations.length > 0 && (
                     <div className="space-y-2">
