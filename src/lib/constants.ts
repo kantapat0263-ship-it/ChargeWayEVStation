@@ -84,41 +84,61 @@ export function getTariffRate(networkId: string, mode: TariffMode, at: Date = ne
 export interface ChargingNetwork {
   id: string;
   name: string;
+  short: string; // ตัวย่อแบรนด์ที่แสดงบนหมุด
   color: string;
   queries: string[]; // รายการคีย์เวิร์ดที่ใช้ค้นหาจริง
   brandMatch: string[]; // คำสำคัญที่ใช้กรองยืนยันแบรนด์
 }
 
 export const CHARGING_NETWORKS: ChargingNetwork[] = [
-  { 
-    id: 'ptt', 
-    name: 'PTT EV STATION', 
-    color: '#004A99', 
+  {
+    id: 'ptt',
+    name: 'PTT EV STATION',
+    short: 'PTT',
+    color: '#004A99',
     queries: ['PTT EV Station', 'PTT Charging Station', 'ปตท EV', 'PTT EV', 'EV Station Pluz'],
-    brandMatch: ['ptt', 'ปตท', 'pluz'] 
+    brandMatch: ['ptt', 'ปตท', 'pluz']
   },
-  { 
-    id: 'pea', 
-    name: 'PEA VOLTA', 
-    color: '#7B2CBF', 
+  {
+    id: 'pea',
+    name: 'PEA VOLTA',
+    short: 'PEA',
+    color: '#7B2CBF',
     queries: ['PEA VOLTA', 'PEA Volta', 'โวลต้า', 'VOLTA charging'],
-    brandMatch: ['pea', 'volta', 'โวลต้า'] 
+    brandMatch: ['pea', 'volta', 'โวลต้า']
   },
-  { 
-    id: 'elexa', 
-    name: 'ELEXA', 
-    color: '#00BFA5', 
+  {
+    id: 'elexa',
+    name: 'ELEXA',
+    short: 'EleX',
+    color: '#00BFA5',
     queries: ['ELEXA', 'EleXA', 'EleX by EGAT', 'EGAT EV'],
-    brandMatch: ['elexa', 'egat', 'elex'] 
+    brandMatch: ['elexa', 'egat', 'elex']
   },
-  { 
-    id: 'spark', 
-    name: 'SPARK EV', 
-    color: '#E31937', 
+  {
+    id: 'spark',
+    name: 'SPARK EV',
+    short: 'SPARK',
+    color: '#E31937',
     queries: ['SPARK EV', 'Spark Charging'],
-    brandMatch: ['spark'] 
+    brandMatch: ['spark']
   },
 ];
+
+// เครือข่ายอื่น ๆ ที่ไม่รู้จัก ใช้สีกลางและไอคอนทั่วไป
+export const UNKNOWN_NETWORK = {
+  id: 'other',
+  name: 'สถานีชาร์จอื่น ๆ',
+  short: 'EV',
+  color: '#1F8C8C',
+} as const;
+
+// จับคู่ชื่อสถานี (จาก Google Places) กับเครือข่ายที่รู้จัก
+export function matchStationNetwork(name?: string): ChargingNetwork | null {
+  if (!name) return null;
+  const n = name.toLowerCase();
+  return CHARGING_NETWORKS.find(net => net.brandMatch.some(m => n.includes(m.toLowerCase()))) ?? null;
+}
 
 export const DEFAULT_SEARCH_KEYWORDS = [
   'EV Charging Station',

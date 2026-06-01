@@ -7,8 +7,7 @@ import {
   Map, 
   useMapsLibrary, 
   useMap, 
-  AdvancedMarker, 
-  Pin,
+  AdvancedMarker,
   InfoWindow,
   MapMouseEvent
 } from '@vis.gl/react-google-maps';
@@ -65,6 +64,8 @@ import {
   getTariffRate,
   isPeakTime,
   type TariffMode,
+  matchStationNetwork,
+  UNKNOWN_NETWORK,
 } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
@@ -888,23 +889,30 @@ function MapView({
             </AdvancedMarker>
           ))}
 
-          {stations.map((station, i) => (
-            <AdvancedMarker
-              key={station.place_id || i}
-              position={station.geometry.location}
-              title={station.name}
-              onClick={() => selectStation(station)}
-            >
-              <Pin 
-                background={selectedStation?.place_id === station.place_id ? '#FF5722' : '#1F8C8C'} 
-                borderColor={'#ffffff'} 
-                glyphColor={'#ffffff'}
-                scale={selectedStation?.place_id === station.place_id ? 1.4 : 1.1}
+          {stations.map((station, i) => {
+            const net = matchStationNetwork(station.name) ?? UNKNOWN_NETWORK;
+            const isSelected = selectedStation?.place_id === station.place_id;
+            return (
+              <AdvancedMarker
+                key={station.place_id || i}
+                position={station.geometry.location}
+                title={`${net.name} · ${station.name}`}
+                zIndex={isSelected ? 50 : 1}
+                onClick={() => selectStation(station)}
               >
-                <Zap className="w-3.5 h-3.5 text-white" />
-              </Pin>
-            </AdvancedMarker>
-          ))}
+                <div
+                  className={cn(
+                    "flex items-center gap-1 rounded-full border-2 border-white shadow-lg font-black text-white transition-transform",
+                    isSelected ? "px-2.5 py-1 scale-110 ring-2 ring-offset-1 ring-orange-400" : "px-2 py-0.5"
+                  )}
+                  style={{ backgroundColor: net.color }}
+                >
+                  <Zap className={cn("fill-white", isSelected ? "w-3.5 h-3.5" : "w-3 h-3")} />
+                  <span className={cn("tracking-tight", isSelected ? "text-[11px]" : "text-[10px]")}>{net.short}</span>
+                </div>
+              </AdvancedMarker>
+            );
+          })}
 
           {selectedStation && (
             <InfoWindow
@@ -919,6 +927,17 @@ function MapView({
                     className="w-full h-24 object-cover rounded-lg mb-2"
                   />
                 )}
+                {(() => {
+                  const net = matchStationNetwork(selectedStation.name) ?? UNKNOWN_NETWORK;
+                  return (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-black text-white mb-1"
+                      style={{ backgroundColor: net.color }}
+                    >
+                      <Zap className="w-2.5 h-2.5 fill-white" /> {net.name}
+                    </span>
+                  );
+                })()}
                 <h3 className="font-black text-sm text-primary mb-1">{selectedStation.name}</h3>
                 <div className="flex items-center gap-2 mb-1 text-[11px]">
                   <StationRating rating={selectedStation.rating} total={selectedStation.user_ratings_total} />
@@ -956,6 +975,24 @@ function MapView({
             </InfoWindow>
           )}
         </Map>
+
+        {stations.length > 0 && (
+          <div className="absolute bottom-3 left-3 z-20 bg-white/90 backdrop-blur-md rounded-2xl shadow-lg border border-border/40 px-3 py-2">
+            <p className="text-[8px] font-black uppercase tracking-widest text-muted-foreground mb-1.5">เครือข่าย</p>
+            <div className="flex flex-col gap-1">
+              {CHARGING_NETWORKS.map(net => (
+                <div key={net.id} className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-full border border-white shadow" style={{ backgroundColor: net.color }} />
+                  <span className="text-[9px] font-bold text-foreground/80">{net.short}</span>
+                </div>
+              ))}
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full border border-white shadow" style={{ backgroundColor: UNKNOWN_NETWORK.color }} />
+                <span className="text-[9px] font-bold text-foreground/80">อื่น ๆ</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {routeInfo && (
@@ -1032,7 +1069,9 @@ function MapView({
                       <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">ตัวเลือกสถานี {stations.length} แห่ง (รัศมี {searchRadiusKm} กม.)</p>
                       <ScrollArea className="h-[200px] rounded-2xl border border-border/50 p-2">
                         <div className="space-y-2">
-                          {stations.map((s, idx) => (
+                          {stations.map((s, idx) => {
+                            const net = matchStationNetwork(s.name) ?? UNKNOWN_NETWORK;
+                            return (
                             <button
                               key={s.place_id || idx}
                               onClick={() => selectStation(s)}
@@ -1050,12 +1089,15 @@ function MapView({
                                   className="w-11 h-11 rounded-lg object-cover shrink-0"
                                 />
                               ) : (
-                                <div className="w-11 h-11 rounded-lg bg-secondary/10 flex items-center justify-center shrink-0">
-                                  <Zap className="w-5 h-5 text-secondary" />
+                                <div className="w-11 h-11 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: net.color }}>
+                                  <Zap className="w-5 h-5 text-white fill-white" />
                                 </div>
                               )}
                               <div className="min-w-0 flex-1">
-                                <p className="text-[11px] font-bold text-foreground truncate">{s.name}</p>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[8px] font-black text-white rounded px-1 py-0.5 shrink-0" style={{ backgroundColor: net.color }}>{net.short}</span>
+                                  <p className="text-[11px] font-bold text-foreground truncate">{s.name}</p>
+                                </div>
                                 <p className="text-[9px] text-muted-foreground truncate">{s.vicinity}</p>
                                 <div className="flex items-center gap-2 mt-0.5 text-[9px]">
                                   <StationRating rating={s.rating} total={s.user_ratings_total} />
@@ -1068,7 +1110,8 @@ function MapView({
                                 </div>
                               </div>
                             </button>
-                          ))}
+                            );
+                          })}
                         </div>
                       </ScrollArea>
                     </div>
