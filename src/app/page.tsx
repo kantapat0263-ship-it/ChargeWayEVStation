@@ -1194,7 +1194,11 @@ function MapView({
 
   return (
     <>
-      <div className="w-full h-[50vh] lg:h-full relative shrink-0">
+      <div className={cn(
+        isDriving
+          ? "fixed inset-0 z-50 w-screen h-[100dvh]"
+          : "relative w-full h-[50vh] lg:h-full shrink-0"
+      )}>
         <Map
           mapId="charge_way_v5"
           defaultCenter={{ lat: 13.7367, lng: 100.5231 }}
