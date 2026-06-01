@@ -48,6 +48,39 @@ export const VEHICLE_MODELS: VehicleModel[] = [
 export const DEFAULT_PRICE_PER_KWH = 7.5;
 export const DEFAULT_TARGET_CHARGE = 80;
 
+// ===== Charging Tariffs (Peak / Off-peak) =====
+// ราคา DC โดยประมาณต่อเครือข่าย (อ้างอิงข้อมูลปี 2025 — อาจเปลี่ยนแปลง ควรตรวจสอบกับแอปของแต่ละค่าย)
+export interface NetworkTariff {
+  peak: number;    // บาท/kWh ช่วง Peak
+  offPeak: number; // บาท/kWh ช่วง Off-peak
+  note?: string;
+}
+
+export const NETWORK_TARIFFS: Record<string, NetworkTariff> = {
+  ptt:   { peak: 7.5, offPeak: 5.5, note: 'EV Station PluZ' },
+  pea:   { peak: 7.5, offPeak: 5.8, note: 'อ้างอิงหัวชาร์จ 120kW' },
+  elexa: { peak: 7.5, offPeak: 6.5, note: 'EGAT 6.5 / ในปั๊ม PT 7.5' },
+  spark: { peak: 5.9, offPeak: 5.9, note: 'ราคาเดียวทุกช่วงเวลา' },
+};
+
+export type TariffMode = 'auto' | 'peak' | 'offpeak';
+
+// Peak: จันทร์-ศุกร์ 09:00-22:00 / นอกนั้นเป็น Off-peak (รวมเสาร์-อาทิตย์ทั้งวัน)
+export function isPeakTime(d: Date = new Date()): boolean {
+  const day = d.getDay(); // 0 = อาทิตย์, 6 = เสาร์
+  if (day === 0 || day === 6) return false;
+  const h = d.getHours();
+  return h >= 9 && h < 22;
+}
+
+// คืนค่าราคา บาท/kWh ตามโหมดและเวลาที่กำหนด
+export function getTariffRate(networkId: string, mode: TariffMode, at: Date = new Date()): number {
+  const t = NETWORK_TARIFFS[networkId] ?? { peak: DEFAULT_PRICE_PER_KWH, offPeak: DEFAULT_PRICE_PER_KWH };
+  if (mode === 'peak') return t.peak;
+  if (mode === 'offpeak') return t.offPeak;
+  return isPeakTime(at) ? t.peak : t.offPeak; // auto
+}
+
 export interface ChargingNetwork {
   id: string;
   name: string;

@@ -57,11 +57,14 @@ import {
   CHARGING_NETWORKS,
   DEFAULT_SEARCH_KEYWORDS,
   VEHICLE_MODELS,
-  DEFAULT_PRICE_PER_KWH,
   DEFAULT_TARGET_CHARGE,
   RANGE_STANDARDS,
   toEpaRange,
   type RangeStandard,
+  NETWORK_TARIFFS,
+  getTariffRate,
+  isPeakTime,
+  type TariffMode,
 } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
@@ -181,7 +184,8 @@ function TripForm({
   const [minBatteryThreshold, setMinBatteryThreshold] = useState(15);
   const [targetCharge, setTargetCharge] = useState(DEFAULT_TARGET_CHARGE);
   const [searchRadius, setSearchRadius] = useState(20); // กม.
-  const [pricePerKwh, setPricePerKwh] = useState(DEFAULT_PRICE_PER_KWH);
+  const [pricingNetworkId, setPricingNetworkId] = useState('ptt');
+  const [tariffMode, setTariffMode] = useState<TariffMode>('auto');
   const [selectedNetworks, setSelectedNetworks] = useState<string[]>(CHARGING_NETWORKS.map(n => n.id));
   const [isLocating, setIsLocating] = useState(false);
 
@@ -296,7 +300,8 @@ function TripForm({
       chargingKw: selectedVehicle.maxDcKw,
       targetCharge,
       searchRadius,
-      pricePerKwh,
+      pricingNetworkId,
+      tariffMode,
     });
   };
 
@@ -517,19 +522,60 @@ function TripForm({
             step={1}
             className="py-1 cursor-pointer"
           />
-          <div className="flex items-center justify-between pt-2 border-t border-border/40">
-            <Label className="flex items-center gap-2 text-[12px] font-bold text-muted-foreground">
-              <Coins className="w-4 h-4 text-amber-500" />
-              ค่าไฟ (บาท/kWh)
-            </Label>
-            <Input
-              type="number"
-              value={pricePerKwh}
-              onChange={e => setPricePerKwh(Number(e.target.value))}
-              step={0.5}
-              min={0}
-              className="w-24 h-9 rounded-xl text-right font-black text-primary tabular-nums"
-            />
+        </div>
+
+        <div className="space-y-3 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40">
+          <Label className="flex items-center gap-2.5 text-sm font-bold text-foreground/80">
+            <div className="p-1.5 bg-amber-500/10 rounded-lg text-amber-500">
+              <Coins className="w-4 h-4" />
+            </div>
+            ค่าไฟอ้างอิง (Peak / Off-peak)
+          </Label>
+
+          <Select value={pricingNetworkId} onValueChange={setPricingNetworkId}>
+            <SelectTrigger className="h-11 rounded-2xl bg-background/50 font-bold text-sm">
+              <SelectValue placeholder="เลือกเครือข่าย" />
+            </SelectTrigger>
+            <SelectContent className="rounded-2xl">
+              {CHARGING_NETWORKS.filter(n => NETWORK_TARIFFS[n.id]).map(n => (
+                <SelectItem key={n.id} value={n.id} className="font-medium">
+                  {n.name}
+                  <span className="text-muted-foreground"> · {NETWORK_TARIFFS[n.id].peak}/{NETWORK_TARIFFS[n.id].offPeak} ฿</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <div className="flex items-center gap-1.5">
+            {([
+              { id: 'auto', label: 'อัตโนมัติ' },
+              { id: 'peak', label: 'Peak' },
+              { id: 'offpeak', label: 'Off-peak' },
+            ] as { id: TariffMode; label: string }[]).map(opt => (
+              <button
+                key={opt.id}
+                onClick={() => setTariffMode(opt.id)}
+                className={cn(
+                  "flex-1 py-1.5 rounded-xl text-[11px] font-black transition-all border",
+                  tariffMode === opt.id
+                    ? "bg-amber-500 text-white border-amber-500 shadow"
+                    : "bg-background text-muted-foreground border-border/60 hover:border-amber-400/50"
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-[11px] font-bold text-muted-foreground">
+              {tariffMode === 'auto'
+                ? `ตอนนี้ ${isPeakTime() ? 'Peak' : 'Off-peak'} · เลือกตามเวลาถึงจุดชาร์จ`
+                : tariffMode === 'peak' ? 'คิดอัตรา Peak ทุกจุด' : 'คิดอัตรา Off-peak ทุกจุด'}
+            </span>
+            <span className="text-sm font-black text-amber-600 tabular-nums">
+              {getTariffRate(pricingNetworkId, tariffMode)} ฿/kWh
+            </span>
           </div>
         </div>
       </section>
@@ -592,9 +638,11 @@ function MapView({
   const [chargeStats, setChargeStats] = useState<{
     perStopKwh: number;
     perStopMin: number;
-    perStopCost: number;
     totalMin: number;
     totalCost: number;
+    rateLabel: string;
+    networkId: string;
+    tariffMode: TariffMode;
   } | null>(null);
 
   // ดึงรายละเอียดเพิ่มเติมของสถานีที่เลือก (เบอร์โทร/เว็บไซต์/เวลาเปิด)
@@ -696,7 +744,7 @@ function MapView({
       const {
         origin, destination, epaRange, minBatteryThreshold, selectedNetworks,
         batteryKwh = 60, chargingKw = 60, targetCharge = 80,
-        searchRadius = 20, pricePerKwh = 7.5,
+        searchRadius = 20, pricingNetworkId = 'ptt', tariffMode = 'auto',
       } = tripData;
       setSearchRadiusKm(searchRadius);
       const directionsService = new google.maps.DirectionsService();
@@ -744,18 +792,37 @@ function MapView({
           }
         }
 
-        // คำนวณเวลาชาร์จ + ค่าไฟต่อจุด และรวมทั้งทริป
+        // คำนวณเวลาชาร์จ + ค่าไฟต่อจุด (เลือก Peak/Off-peak ตามเวลาที่คาดว่าจะถึงแต่ละจุด)
         if (stops.length > 0) {
           const chargePercent = Math.max(0, targetCharge - minBatteryThreshold) / 100;
           const perStopKwh = batteryKwh * chargePercent;
           const perStopMin = chargingKw > 0 ? (perStopKwh / chargingKw) * 60 : 0;
-          const perStopCost = perStopKwh * pricePerKwh;
+          const totalKm = (route.distance?.value || 0) / 1000;
+          const totalDurationSec = route.duration?.value || 0;
+          const now = Date.now();
+
+          let totalCost = 0;
+          let cumulativeChargeMin = 0;
+          const rates: number[] = [];
+          stops.forEach((s) => {
+            const driveSec = totalKm > 0 ? (s.atKm / totalKm) * totalDurationSec : 0;
+            const arrival = new Date(now + driveSec * 1000 + cumulativeChargeMin * 60000);
+            cumulativeChargeMin += perStopMin;
+            const rate = getTariffRate(pricingNetworkId, tariffMode, arrival);
+            rates.push(rate);
+            totalCost += perStopKwh * rate;
+          });
+
+          const minRate = Math.min(...rates);
+          const maxRate = Math.max(...rates);
           setChargeStats({
             perStopKwh: Math.round(perStopKwh * 10) / 10,
             perStopMin: Math.round(perStopMin),
-            perStopCost: Math.round(perStopCost),
             totalMin: Math.round(perStopMin * stops.length),
-            totalCost: Math.round(perStopCost * stops.length),
+            totalCost: Math.round(totalCost),
+            rateLabel: minRate === maxRate ? `${minRate}` : `${minRate}–${maxRate}`,
+            networkId: pricingNetworkId,
+            tariffMode,
           });
         }
 
@@ -945,7 +1012,10 @@ function MapView({
                           </div>
                         </div>
                         <p className="col-span-2 text-[10px] font-medium text-muted-foreground text-center">
-                          ต่อจุด ~{chargeStats.perStopKwh} kWh · {formatMinutes(chargeStats.perStopMin)} · ~{chargeStats.perStopCost.toLocaleString()} ฿
+                          ต่อจุด ~{chargeStats.perStopKwh} kWh · {formatMinutes(chargeStats.perStopMin)} ·{" "}
+                          {CHARGING_NETWORKS.find(n => n.id === chargeStats.networkId)?.name ?? ''}{" "}
+                          {chargeStats.rateLabel} ฿/kWh
+                          {chargeStats.tariffMode === 'auto' ? ' (อัตโนมัติ)' : chargeStats.tariffMode === 'peak' ? ' (Peak)' : ' (Off-peak)'}
                         </p>
                       </div>
                     )}
