@@ -19,6 +19,13 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -359,18 +366,29 @@ function TripForm({
 
   // ===== บันทึก/โหลดทริป =====
   const [savedTrips, setSavedTrips] = useState<SavedTrip[]>([]);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [tripName, setTripName] = useState("");
   useEffect(() => { setSavedTrips(loadTrips()); }, []);
 
-  const handleSaveTrip = () => {
+  // ตั้งชื่อเริ่มต้นแบบสั้น (เอาเฉพาะส่วนแรกของที่อยู่)
+  const shortPlace = (addr: string) => addr.split(',')[0].trim().slice(0, 28);
+
+  const openSaveDialog = () => {
     if (!origin || !destination) {
       toast({ variant: 'destructive', title: 'บันทึกไม่ได้', description: 'กรอกจุดเริ่มต้นและปลายทางก่อน' });
       return;
     }
-    const name = `${origin.split(',')[0]} → ${destination.split(',')[0]}`;
+    setTripName(`${shortPlace(origin)} → ${shortPlace(destination)}`);
+    setSaveDialogOpen(true);
+  };
+
+  const confirmSaveTrip = () => {
+    const name = tripName.trim() || `${shortPlace(origin)} → ${shortPlace(destination)}`;
     setSavedTrips(saveTrip({
       name, origin, destination, vehicleId, fullRange, rangeStandard,
       minBatteryThreshold, targetCharge, searchRadius, pricingNetworkId, tariffMode, selectedNetworks,
     }));
+    setSaveDialogOpen(false);
     toast({ title: 'บันทึกทริปแล้ว', description: name });
   };
 
@@ -410,33 +428,70 @@ function TripForm({
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-left-4 duration-500">
-      <section className="space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-4 bg-primary rounded-full" />
-            <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">ทริปของฉัน</h2>
+      <section className="space-y-3 min-w-0">
+        <div className="flex items-center justify-between gap-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-1.5 h-4 bg-primary rounded-full shrink-0" />
+            <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground truncate">ทริปของฉัน</h2>
           </div>
-          <Button variant="outline" size="sm" onClick={handleSaveTrip} className="h-8 rounded-xl gap-1.5 text-[11px] font-bold">
-            <Save className="w-3.5 h-3.5" /> บันทึกทริปนี้
+          <Button variant="outline" size="sm" onClick={openSaveDialog} className="h-8 rounded-xl gap-1.5 text-[11px] font-bold shrink-0">
+            <Save className="w-3.5 h-3.5" /> บันทึก
           </Button>
         </div>
         {savedTrips.length > 0 ? (
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 min-w-0">
             {savedTrips.map(t => (
-              <div key={t.id} className="flex items-center gap-2 bg-muted/30 rounded-xl p-2 border border-border/40 hover:bg-muted/50 transition-colors">
+              <div key={t.id} className="flex items-center gap-2 bg-muted/30 rounded-xl p-2 border border-border/40 hover:bg-muted/50 transition-colors min-w-0">
                 <button onClick={() => handleLoadTrip(t)} className="flex-1 min-w-0 text-left flex items-center gap-2">
                   <FolderOpen className="w-3.5 h-3.5 text-primary shrink-0" />
-                  <span className="text-[11px] font-bold truncate">{t.name}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="text-[11px] font-bold truncate block">{t.name}</span>
+                    <span className="text-[9px] text-muted-foreground">
+                      {new Date(t.createdAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}
+                    </span>
+                  </span>
                 </button>
-                <button onClick={() => handleDeleteTrip(t.id)} title="ลบทริป" className="text-muted-foreground hover:text-red-500 shrink-0 p-1">
-                  <Trash2 className="w-3.5 h-3.5" />
+                <button
+                  onClick={() => handleDeleteTrip(t.id)}
+                  title="ลบทริป"
+                  className="shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
                 </button>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-[10px] text-muted-foreground italic px-1">ยังไม่มีทริปที่บันทึก — กด “บันทึกทริปนี้” เพื่อเก็บไว้ใช้ภายหลัง</p>
+          <p className="text-[10px] text-muted-foreground italic px-1">ยังไม่มีทริปที่บันทึก — กด “บันทึก” เพื่อเก็บไว้ใช้ภายหลัง</p>
         )}
+
+        <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
+          <DialogContent className="rounded-3xl max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Save className="w-4 h-4 text-primary" /> บันทึกทริป
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-muted-foreground">ตั้งชื่อทริป</Label>
+              <Input
+                value={tripName}
+                onChange={e => setTripName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') confirmSaveTrip(); }}
+                placeholder="เช่น บ้าน → ที่ทำงาน"
+                maxLength={60}
+                autoFocus
+                className="h-11 rounded-xl"
+              />
+            </div>
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button variant="outline" onClick={() => setSaveDialogOpen(false)} className="rounded-xl font-bold">ยกเลิก</Button>
+              <Button onClick={confirmSaveTrip} className="rounded-xl font-bold gap-1.5">
+                <Save className="w-4 h-4" /> บันทึก
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </section>
 
       <section className="space-y-4">

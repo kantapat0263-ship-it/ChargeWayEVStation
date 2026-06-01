@@ -61,6 +61,12 @@
   mask-image: linear-gradient(to right, transparent, black 5%);
 }
 
+/* แก้ Radix ScrollArea ที่ตั้ง inner wrapper เป็น display:table ทำให้ truncate ไม่ทำงาน
+   (ชื่อยาว ๆ ล้นออกนอกกรอบ พาปุ่มลบหลุดจอ) — บังคับเป็น block เพื่อจำกัดความกว้าง */
+[data-radix-scroll-area-viewport] > div {
+  display: block !important;
+}
+
 @keyframes pulse-soft {
   0% { transform: scale(1); opacity: 0.8; }
   50% { transform: scale(1.05); opacity: 1; }
