@@ -50,7 +50,15 @@ import {
   Timer,
   Coins,
   Gauge,
-  CircleDot
+  CircleDot,
+  Save,
+  FolderOpen,
+  Trash2,
+  Moon,
+  Sun,
+  Share2,
+  Copy,
+  Check,
 } from 'lucide-react';
 import {
   CHARGING_NETWORKS,
@@ -67,9 +75,48 @@ import {
   matchStationNetwork,
   UNKNOWN_NETWORK,
 } from '@/lib/constants';
+import { type SavedTrip, loadTrips, saveTrip, deleteTrip } from '@/lib/trips';
 import { cn } from '@/lib/utils';
 
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PIl-0fyiz40tHHH8Hnk";
+
+// จัดการธีมสว่าง/มืด เก็บค่าใน localStorage และสลับคลาส .dark บน <html>
+function useTheme(): [boolean, () => void] {
+  const [isDark, setIsDark] = useState(false);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem('chargeway_theme');
+    const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+    const dark = saved ? saved === 'dark' : !!prefersDark;
+    setIsDark(dark);
+    document.documentElement.classList.toggle('dark', dark);
+  }, []);
+
+  const toggle = () => {
+    setIsDark(prev => {
+      const next = !prev;
+      document.documentElement.classList.toggle('dark', next);
+      window.localStorage.setItem('chargeway_theme', next ? 'dark' : 'light');
+      return next;
+    });
+  };
+
+  return [isDark, toggle];
+}
+
+function ThemeToggle({ isDark, onToggle }: { isDark: boolean; onToggle: () => void }) {
+  return (
+    <Button
+      variant="outline"
+      size="icon"
+      onClick={onToggle}
+      title={isDark ? 'โหมดสว่าง' : 'โหมดมืด'}
+      className="h-9 w-9 rounded-xl shrink-0"
+    >
+      {isDark ? <Sun className="w-4.5 h-4.5 text-amber-400" /> : <Moon className="w-4.5 h-4.5 text-primary" />}
+    </Button>
+  );
+}
 
 // แปลงนาทีเป็นข้อความ เช่น "1 ชม. 20 นาที"
 function formatMinutes(min: number): string {
@@ -107,13 +154,14 @@ function StationRating({ rating, total }: { rating?: number; total?: number }) {
 export default function ChargeWayApp() {
   const [tripData, setTripData] = useState<any>(null);
   const [isPickingOnMap, setIsPickingOnMap] = useState<'origin' | 'destination' | null>(null);
+  const [isDark, toggleTheme] = useTheme();
 
   return (
     <APIProvider apiKey={GOOGLE_MAPS_API_KEY} libraries={['places', 'geocoding', 'routes', 'geometry']}>
       <div className="flex flex-col lg:flex-row min-h-screen lg:h-screen w-full bg-background overflow-x-hidden font-body selection:bg-primary/20">
         {/* Left Control Panel */}
         <div className="w-full lg:w-[420px] h-auto lg:h-full flex flex-col border-r border-border bg-card z-20 shadow-2xl relative lg:overflow-hidden">
-          <header className="p-6 pb-4 border-b border-border/50 bg-white/50 backdrop-blur-sm sticky top-0 z-30">
+          <header className="p-6 pb-4 border-b border-border/50 bg-white/50 dark:bg-card/50 backdrop-blur-sm sticky top-0 z-30">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-3">
                 <div className="bg-primary/10 p-2.5 rounded-2xl">
@@ -124,9 +172,12 @@ export default function ChargeWayApp() {
                   <p className="text-[10px] uppercase font-black text-muted-foreground tracking-[0.2em]">Smart EV Journey Planner</p>
                 </div>
               </div>
-              <Badge variant="outline" className="rounded-full bg-secondary/5 text-secondary border-secondary/20 font-bold px-3">
-                EPA Standard
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="rounded-full bg-secondary/5 text-secondary border-secondary/20 font-bold px-3 hidden sm:inline-flex">
+                  EPA Standard
+                </Badge>
+                <ThemeToggle isDark={isDark} onToggle={toggleTheme} />
+              </div>
             </div>
           </header>
 
@@ -146,7 +197,7 @@ export default function ChargeWayApp() {
         </div>
 
         {/* Right Map Panel & Summary */}
-        <div className="flex-1 relative flex flex-col h-auto lg:h-full bg-slate-50 overflow-y-auto lg:overflow-hidden">
+        <div className="flex-1 relative flex flex-col h-auto lg:h-full bg-slate-50 dark:bg-slate-950 overflow-y-auto lg:overflow-hidden">
           <MapView 
             tripData={tripData} 
             isPickingOnMap={isPickingOnMap} 
@@ -306,8 +357,88 @@ function TripForm({
     });
   };
 
+  // ===== บันทึก/โหลดทริป =====
+  const [savedTrips, setSavedTrips] = useState<SavedTrip[]>([]);
+  useEffect(() => { setSavedTrips(loadTrips()); }, []);
+
+  const handleSaveTrip = () => {
+    if (!origin || !destination) {
+      toast({ variant: 'destructive', title: 'บันทึกไม่ได้', description: 'กรอกจุดเริ่มต้นและปลายทางก่อน' });
+      return;
+    }
+    const name = `${origin.split(',')[0]} → ${destination.split(',')[0]}`;
+    setSavedTrips(saveTrip({
+      name, origin, destination, vehicleId, fullRange, rangeStandard,
+      minBatteryThreshold, targetCharge, searchRadius, pricingNetworkId, tariffMode, selectedNetworks,
+    }));
+    toast({ title: 'บันทึกทริปแล้ว', description: name });
+  };
+
+  const handleLoadTrip = (t: SavedTrip) => {
+    setOrigin(t.origin);
+    setDestination(t.destination);
+    setVehicleId(t.vehicleId);
+    setFullRange(t.fullRange);
+    setRangeStandard(t.rangeStandard);
+    setMinBatteryThreshold(t.minBatteryThreshold);
+    setTargetCharge(t.targetCharge);
+    setSearchRadius(t.searchRadius);
+    setPricingNetworkId(t.pricingNetworkId);
+    setTariffMode(t.tariffMode);
+    setSelectedNetworks(t.selectedNetworks);
+    const veh = VEHICLE_MODELS.find(v => v.id === t.vehicleId) ?? VEHICLE_MODELS[0];
+    onPlanTrip({
+      origin: t.origin,
+      destination: t.destination,
+      fullRange: t.fullRange,
+      rangeStandard: t.rangeStandard,
+      epaRange: toEpaRange(t.fullRange, t.rangeStandard),
+      minBatteryThreshold: t.minBatteryThreshold,
+      selectedNetworks: t.selectedNetworks,
+      vehicleName: veh.name,
+      batteryKwh: veh.batteryKwh,
+      chargingKw: veh.maxDcKw,
+      targetCharge: t.targetCharge,
+      searchRadius: t.searchRadius,
+      pricingNetworkId: t.pricingNetworkId,
+      tariffMode: t.tariffMode,
+    });
+    toast({ title: 'โหลดทริปแล้ว', description: t.name });
+  };
+
+  const handleDeleteTrip = (id: string) => setSavedTrips(deleteTrip(id));
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-left-4 duration-500">
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-4 bg-primary rounded-full" />
+            <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">ทริปของฉัน</h2>
+          </div>
+          <Button variant="outline" size="sm" onClick={handleSaveTrip} className="h-8 rounded-xl gap-1.5 text-[11px] font-bold">
+            <Save className="w-3.5 h-3.5" /> บันทึกทริปนี้
+          </Button>
+        </div>
+        {savedTrips.length > 0 ? (
+          <div className="space-y-1.5">
+            {savedTrips.map(t => (
+              <div key={t.id} className="flex items-center gap-2 bg-muted/30 rounded-xl p-2 border border-border/40 hover:bg-muted/50 transition-colors">
+                <button onClick={() => handleLoadTrip(t)} className="flex-1 min-w-0 text-left flex items-center gap-2">
+                  <FolderOpen className="w-3.5 h-3.5 text-primary shrink-0" />
+                  <span className="text-[11px] font-bold truncate">{t.name}</span>
+                </button>
+                <button onClick={() => handleDeleteTrip(t.id)} title="ลบทริป" className="text-muted-foreground hover:text-red-500 shrink-0 p-1">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[10px] text-muted-foreground italic px-1">ยังไม่มีทริปที่บันทึก — กด “บันทึกทริปนี้” เพื่อเก็บไว้ใช้ภายหลัง</p>
+        )}
+      </section>
+
       <section className="space-y-4">
         <div className="flex items-center gap-2 mb-2">
           <div className="w-1.5 h-4 bg-primary rounded-full" />
@@ -634,6 +765,7 @@ function MapView({
   const [plannedStops, setPlannedStops] = useState<any[]>([]);
   const [routeInfo, setRouteInfo] = useState<{distance: string, duration: string, distanceKm: number} | null>(null);
   const [selectedStation, setSelectedStation] = useState<any | null>(null);
+  const [copied, setCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [searchRadiusKm, setSearchRadiusKm] = useState(20);
   const [chargeStats, setChargeStats] = useState<{
@@ -870,6 +1002,48 @@ function MapView({
     window.open(url, '_blank');
   };
 
+  // สร้างข้อความสรุปทริปสำหรับแชร์/คัดลอก
+  const buildSummary = () => {
+    const lines = [
+      '🚗 แผนเดินทาง EV — ChargeWay',
+      `📍 จาก: ${tripData?.origin ?? '-'}`,
+      `🏁 ถึง: ${tripData?.destination ?? '-'}`,
+    ];
+    if (tripData?.vehicleName) lines.push(`🔋 รถ: ${tripData.vehicleName}`);
+    if (routeInfo) lines.push(`🛣️ ระยะทาง: ${routeInfo.distance} · เวลาขับ ~${routeInfo.duration}`);
+    lines.push(`⚡ จุดแวะชาร์จ: ${plannedStops.length} จุด`);
+    if (chargeStats) {
+      const netName = CHARGING_NETWORKS.find(n => n.id === chargeStats.networkId)?.name ?? '';
+      const totalKwh = Math.round(chargeStats.perStopKwh * plannedStops.length);
+      lines.push(`🔌 ชาร์จรวม ~${totalKwh} kWh · เวลาชาร์จ ~${formatMinutes(chargeStats.totalMin)}`);
+      lines.push(`💰 ค่าไฟรวม ~${chargeStats.totalCost.toLocaleString()} ฿ (${netName} ${chargeStats.rateLabel} ฿/kWh)`);
+    }
+    return lines.join('\n');
+  };
+
+  const handleCopySummary = async () => {
+    try {
+      await navigator.clipboard.writeText(buildSummary());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard ไม่พร้อมใช้งาน */
+    }
+  };
+
+  const handleShareSummary = async () => {
+    const text = buildSummary();
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({ title: 'แผนเดินทาง EV — ChargeWay', text });
+        return;
+      } catch {
+        /* ผู้ใช้ยกเลิก หรือ share ใช้ไม่ได้ → ตกไปคัดลอกแทน */
+      }
+    }
+    handleCopySummary();
+  };
+
   return (
     <>
       <div className="w-full h-[50vh] lg:h-full relative shrink-0">
@@ -978,7 +1152,7 @@ function MapView({
         </Map>
 
         {stations.length > 0 && (
-          <div className="absolute bottom-3 left-3 z-20 bg-white/90 backdrop-blur-md rounded-2xl shadow-lg border border-border/40 px-3 py-2">
+          <div className="absolute bottom-3 left-3 z-20 bg-white/90 dark:bg-card/90 backdrop-blur-md rounded-2xl shadow-lg border border-border/40 px-3 py-2">
             <p className="text-[8px] font-black uppercase tracking-widest text-muted-foreground mb-1.5">เครือข่าย</p>
             <div className="flex flex-col gap-1">
               {CHARGING_NETWORKS.map(net => (
@@ -994,7 +1168,7 @@ function MapView({
 
       {routeInfo && (
         <div className="relative lg:absolute lg:top-6 lg:right-6 z-20 flex flex-col gap-5 w-full lg:w-[380px] p-4 lg:p-0">
-          <Card className="border-none shadow-[0_20px_50px_rgba(0,0,0,0.15)] bg-white/95 backdrop-blur-xl rounded-[2rem] overflow-hidden">
+          <Card className="border-none shadow-[0_20px_50px_rgba(0,0,0,0.15)] bg-white/95 dark:bg-card/95 backdrop-blur-xl rounded-[2rem] overflow-hidden">
             <CardHeader className="bg-primary/5 p-6 flex flex-row items-center gap-4 border-b border-primary/10">
               <div className="bg-primary p-3 rounded-2xl">
                 <Route className="w-6 h-6 text-white" />
@@ -1031,14 +1205,14 @@ function MapView({
 
                     {chargeStats && (
                       <div className="grid grid-cols-2 gap-2 pt-1">
-                        <div className="bg-white/60 rounded-xl p-3 flex items-center gap-2">
+                        <div className="bg-white/60 dark:bg-card/60 rounded-xl p-3 flex items-center gap-2">
                           <Timer className="w-4 h-4 text-secondary shrink-0" />
                           <div className="min-w-0">
                             <p className="text-[9px] font-black text-muted-foreground uppercase">เวลาชาร์จรวม</p>
                             <p className="text-[13px] font-black text-secondary truncate">{formatMinutes(chargeStats.totalMin)}</p>
                           </div>
                         </div>
-                        <div className="bg-white/60 rounded-xl p-3 flex items-center gap-2">
+                        <div className="bg-white/60 dark:bg-card/60 rounded-xl p-3 flex items-center gap-2">
                           <Coins className="w-4 h-4 text-amber-500 shrink-0" />
                           <div className="min-w-0">
                             <p className="text-[9px] font-black text-muted-foreground uppercase">ค่าไฟรวม</p>
@@ -1078,7 +1252,7 @@ function MapView({
                                 "w-full text-left p-3 rounded-xl transition-all border flex gap-2.5 items-center",
                                 selectedStation?.place_id === s.place_id
                                   ? "bg-primary/5 border-primary/20 shadow-sm"
-                                  : "bg-white border-transparent hover:bg-muted/30"
+                                  : "bg-white dark:bg-card border-transparent hover:bg-muted/30"
                               )}
                             >
                               {s.photos?.[0] ? (
@@ -1128,7 +1302,25 @@ function MapView({
                 </div>
               )}
 
-              <Button 
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleShareSummary}
+                  className="flex-1 rounded-2xl h-12 font-bold gap-2"
+                >
+                  <Share2 className="w-4 h-4" /> แชร์สรุป
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleCopySummary}
+                  className="flex-1 rounded-2xl h-12 font-bold gap-2"
+                >
+                  {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                  {copied ? 'คัดลอกแล้ว' : 'คัดลอก'}
+                </Button>
+              </div>
+
+              <Button
                 onClick={openInGoogleMaps}
                 className="w-full bg-secondary hover:bg-secondary/90 text-white rounded-2xl h-14 font-black shadow-lg transition-all flex items-center justify-center gap-3 group"
               >
@@ -1143,7 +1335,7 @@ function MapView({
 
       {isLoading && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/40 backdrop-blur-md">
-           <div className="flex flex-col items-center gap-4 bg-white p-8 rounded-[2.5rem] shadow-2xl border border-primary/10 mx-4 text-center">
+           <div className="flex flex-col items-center gap-4 bg-white dark:bg-card p-8 rounded-[2.5rem] shadow-2xl border border-primary/10 mx-4 text-center">
               <Loader2 className="w-12 h-12 text-primary animate-spin" />
               <p className="text-sm font-black text-primary uppercase tracking-[0.2em]">กำลังคำนวณระยะ EPA และจุดแวะชาร์จ...</p>
            </div>
