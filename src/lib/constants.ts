@@ -88,11 +88,8 @@ export interface ChargingNetwork {
   color: string;
   queries: string[]; // รายการคีย์เวิร์ดที่ใช้ค้นหาจริง
   brandMatch: string[]; // คำสำคัญที่ใช้กรองยืนยันแบรนด์
-  connectors: string[]; // ชนิดหัวชาร์จที่เครือข่ายมีให้ (คีย์: CCS2 / CHAdeMO / TYPE2)
-  maxPowerKw: number;   // กำลังไฟ DC สูงสุดโดยทั่วไปของเครือข่าย (kW)
 }
 
-// ข้อมูลสเปกหัวชาร์จเป็นค่าทั่วไปของแต่ละเครือข่ายในไทย (อาจต่างกันตามสถานี)
 export const CHARGING_NETWORKS: ChargingNetwork[] = [
   {
     id: 'ptt',
@@ -101,8 +98,6 @@ export const CHARGING_NETWORKS: ChargingNetwork[] = [
     color: '#004A99',
     queries: ['PTT EV Station', 'PTT Charging Station', 'ปตท EV', 'PTT EV', 'EV Station Pluz'],
     brandMatch: ['ptt', 'ปตท', 'pluz'],
-    connectors: ['CCS2', 'TYPE2'],
-    maxPowerKw: 160,
   },
   {
     id: 'pea',
@@ -111,8 +106,6 @@ export const CHARGING_NETWORKS: ChargingNetwork[] = [
     color: '#7B2CBF',
     queries: ['PEA VOLTA', 'PEA Volta', 'โวลต้า', 'VOLTA charging'],
     brandMatch: ['pea', 'volta', 'โวลต้า'],
-    connectors: ['CCS2', 'CHAdeMO', 'TYPE2'],
-    maxPowerKw: 360,
   },
   {
     id: 'elexa',
@@ -121,8 +114,6 @@ export const CHARGING_NETWORKS: ChargingNetwork[] = [
     color: '#00BFA5',
     queries: ['ELEXA', 'EleXA', 'EleX by EGAT', 'EGAT EV'],
     brandMatch: ['elexa', 'egat', 'elex'],
-    connectors: ['CCS2', 'CHAdeMO', 'TYPE2'],
-    maxPowerKw: 120,
   },
   {
     id: 'spark',
@@ -131,37 +122,8 @@ export const CHARGING_NETWORKS: ChargingNetwork[] = [
     color: '#E31937',
     queries: ['SPARK EV', 'Spark Charging'],
     brandMatch: ['spark'],
-    connectors: ['CCS2'],
-    maxPowerKw: 540,
   },
 ];
-
-// ตัวเลือกชนิดหัวชาร์จสำหรับฟิลเตอร์ (DC คือชาร์จเร็ว)
-export const CONNECTOR_OPTIONS: { key: string; label: string; dc: boolean }[] = [
-  { key: 'CCS2', label: 'CCS2', dc: true },
-  { key: 'CHAdeMO', label: 'CHAdeMO', dc: true },
-  { key: 'TYPE2', label: 'Type 2 (AC)', dc: false },
-];
-
-// ตัวเลือกกรองกำลังไฟขั้นต่ำ (kW)
-export const POWER_OPTIONS: { kw: number; label: string }[] = [
-  { kw: 0, label: 'ทั้งหมด' },
-  { kw: 50, label: '≥ 50kW' },
-  { kw: 100, label: '≥ 100kW' },
-  { kw: 150, label: '≥ 150kW' },
-];
-
-// ตรวจว่าเครือข่ายผ่านฟิลเตอร์ชนิดหัวชาร์จ + กำลังไฟขั้นต่ำหรือไม่
-export function networkMatchesFilter(
-  net: ChargingNetwork | null,
-  connectors: string[],
-  minPowerKw: number
-): boolean {
-  if (!net) return false;
-  if (net.maxPowerKw < minPowerKw) return false;
-  if (connectors.length > 0 && !connectors.some(c => net.connectors.includes(c))) return false;
-  return true;
-}
 
 // เครือข่ายอื่น ๆ ที่ไม่รู้จัก ใช้สีกลางและไอคอนทั่วไป
 export const UNKNOWN_NETWORK = {

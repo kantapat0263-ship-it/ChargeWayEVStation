@@ -66,9 +66,6 @@ import {
   type TariffMode,
   matchStationNetwork,
   UNKNOWN_NETWORK,
-  CONNECTOR_OPTIONS,
-  POWER_OPTIONS,
-  networkMatchesFilter,
 } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
@@ -104,30 +101,6 @@ function StationRating({ rating, total }: { rating?: number; total?: number }) {
       {rating.toFixed(1)}
       {total ? <span className="text-muted-foreground font-medium">({total})</span> : null}
     </span>
-  );
-}
-
-// แสดงสเปกหัวชาร์จของสถานี (อ้างอิงตามเครือข่าย): ชนิดหัว + กำลังไฟสูงสุด
-function EvChargeInfo({ station }: { station: any }) {
-  const net = matchStationNetwork(station?.name);
-  if (!net) return null;
-  return (
-    <div className="flex flex-wrap items-center gap-1">
-      <span className="inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[9px] font-black border bg-orange-50 text-orange-700 border-orange-200">
-        <Zap className="w-2.5 h-2.5" /> สูงสุด {net.maxPowerKw}kW DC
-      </span>
-      {net.connectors.map(c => {
-        const opt = CONNECTOR_OPTIONS.find(o => o.key === c);
-        return (
-          <span key={c} className={cn(
-            "inline-flex items-center rounded-lg px-1.5 py-0.5 text-[9px] font-bold border",
-            opt?.dc ? "bg-slate-50 text-slate-700 border-slate-200" : "bg-blue-50 text-blue-700 border-blue-200"
-          )}>
-            {opt?.label ?? c}
-          </span>
-        );
-      })}
-    </div>
   );
 }
 
@@ -663,8 +636,6 @@ function MapView({
   const [selectedStation, setSelectedStation] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [searchRadiusKm, setSearchRadiusKm] = useState(20);
-  const [connectorFilter, setConnectorFilter] = useState<string[]>([]);
-  const [minPowerKw, setMinPowerKw] = useState(0);
   const [chargeStats, setChargeStats] = useState<{
     perStopKwh: number;
     perStopMin: number;
@@ -899,15 +870,6 @@ function MapView({
     window.open(url, '_blank');
   };
 
-  const toggleConnector = (key: string) => {
-    setConnectorFilter(prev => prev.includes(key) ? prev.filter(c => c !== key) : [...prev, key]);
-  };
-
-  // กรองสถานีตามชนิดหัวชาร์จ + กำลังไฟขั้นต่ำ (อ้างอิงสเปกตามเครือข่าย)
-  const visibleStations = stations.filter(s =>
-    networkMatchesFilter(matchStationNetwork(s.name), connectorFilter, minPowerKw)
-  );
-
   return (
     <>
       <div className="w-full h-[50vh] lg:h-full relative shrink-0">
@@ -928,7 +890,7 @@ function MapView({
             </AdvancedMarker>
           ))}
 
-          {visibleStations.map((station, i) => {
+          {stations.map((station, i) => {
             const net = matchStationNetwork(station.name) ?? UNKNOWN_NETWORK;
             const isSelected = selectedStation?.place_id === station.place_id;
             return (
@@ -987,9 +949,6 @@ function MapView({
                   )}
                 </div>
                 <p className="text-[11px] text-muted-foreground leading-snug mb-2">{selectedStation.vicinity}</p>
-                <div className="mb-2">
-                  <EvChargeInfo station={selectedStation} />
-                </div>
                 <div className="flex gap-2 mt-2">
                   {selectedStation.formatted_phone_number && (
                     <a href={`tel:${selectedStation.formatted_phone_number}`} className="flex-1">
@@ -1018,7 +977,7 @@ function MapView({
           )}
         </Map>
 
-        {visibleStations.length > 0 && (
+        {stations.length > 0 && (
           <div className="absolute bottom-3 left-3 z-20 bg-white/90 backdrop-blur-md rounded-2xl shadow-lg border border-border/40 px-3 py-2">
             <p className="text-[8px] font-black uppercase tracking-widest text-muted-foreground mb-1.5">เครือข่าย</p>
             <div className="flex flex-col gap-1">
@@ -1026,7 +985,6 @@ function MapView({
                 <div key={net.id} className="flex items-center gap-1.5">
                   <span className="w-3 h-3 rounded-full border border-white shadow" style={{ backgroundColor: net.color }} />
                   <span className="text-[9px] font-bold text-foreground/80">{net.short}</span>
-                  <span className="text-[8px] text-muted-foreground">·{net.maxPowerKw}kW</span>
                 </div>
               ))}
             </div>
@@ -1096,69 +1054,21 @@ function MapView({
                       </div>
                     )}
                     {selectedStation && (
-                      <div className="pt-3 border-t border-secondary/20 space-y-2">
-                        <div>
-                          <p className="text-[12px] font-black text-primary truncate">{selectedStation.name}</p>
-                          <Badge className="bg-primary text-white text-[9px] mt-1">เลือกแล้ว</Badge>
-                        </div>
-                        <EvChargeInfo station={selectedStation} />
+                      <div className="pt-3 border-t border-secondary/20">
+                        <p className="text-[12px] font-black text-primary truncate">{selectedStation.name}</p>
+                        <Badge className="bg-primary text-white text-[9px] mt-1">เลือกแล้ว</Badge>
                       </div>
                     )}
                   </div>
 
                   {stations.length > 0 && (
-                    <div className="bg-muted/40 rounded-2xl p-3 space-y-2.5 border border-border/40">
-                      <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">กรองหัวชาร์จ</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {CONNECTOR_OPTIONS.map(opt => {
-                          const active = connectorFilter.includes(opt.key);
-                          return (
-                            <button
-                              key={opt.key}
-                              onClick={() => toggleConnector(opt.key)}
-                              className={cn(
-                                "px-2.5 py-1 rounded-lg text-[10px] font-black border transition-all",
-                                active
-                                  ? "bg-primary text-white border-primary shadow"
-                                  : "bg-white text-muted-foreground border-border/60 hover:border-primary/40"
-                              )}
-                            >
-                              {opt.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[9px] font-bold text-muted-foreground shrink-0">กำลังไฟ</span>
-                        {POWER_OPTIONS.map(opt => (
-                          <button
-                            key={opt.kw}
-                            onClick={() => setMinPowerKw(opt.kw)}
-                            className={cn(
-                              "flex-1 py-1 rounded-lg text-[10px] font-black border transition-all",
-                              minPowerKw === opt.kw
-                                ? "bg-secondary text-white border-secondary shadow"
-                                : "bg-white text-muted-foreground border-border/60 hover:border-secondary/40"
-                            )}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {stations.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest px-2">
-                        ตัวเลือกสถานี {visibleStations.length}/{stations.length} แห่ง (รัศมี {searchRadiusKm} กม.)
+                        ตัวเลือกสถานี {stations.length} แห่ง (รัศมี {searchRadiusKm} กม.)
                       </p>
-                      {visibleStations.length === 0 ? (
-                        <p className="text-[10px] text-muted-foreground italic px-2 py-4 text-center">ไม่มีสถานีที่ตรงกับฟิลเตอร์ ลองปรับเงื่อนไข</p>
-                      ) : (
                       <ScrollArea className="h-[200px] rounded-2xl border border-border/50 p-2">
                         <div className="space-y-2">
-                          {visibleStations.map((s, idx) => {
+                          {stations.map((s, idx) => {
                             const net = matchStationNetwork(s.name) ?? UNKNOWN_NETWORK;
                             return (
                             <button
@@ -1196,12 +1106,6 @@ function MapView({
                                       {getOpenStatus(s) ? "เปิด" : "ปิด"}
                                     </span>
                                   )}
-                                  <span className="font-bold text-orange-600 flex items-center gap-0.5">
-                                    <Zap className="w-2.5 h-2.5" />สูงสุด {net.maxPowerKw}kW
-                                  </span>
-                                  <span className="text-muted-foreground font-medium truncate">
-                                    {net.connectors.map(c => CONNECTOR_OPTIONS.find(o => o.key === c)?.label ?? c).join(' · ')}
-                                  </span>
                                 </div>
                               </div>
                             </button>
@@ -1209,7 +1113,6 @@ function MapView({
                           })}
                         </div>
                       </ScrollArea>
-                      )}
                     </div>
                   )}
                 </div>
