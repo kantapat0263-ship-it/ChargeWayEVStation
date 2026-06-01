@@ -59,13 +59,13 @@ import {
   VEHICLE_MODELS,
   DEFAULT_PRICE_PER_KWH,
   DEFAULT_TARGET_CHARGE,
+  RANGE_STANDARDS,
+  toEpaRange,
+  type RangeStandard,
 } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PIl-0fyiz40tHHH8Hnk";
-
-// EPA Efficiency Factor
-const EPA_FACTOR = 0.85;
 
 // แปลงนาทีเป็นข้อความ เช่น "1 ชม. 20 นาที"
 function formatMinutes(min: number): string {
@@ -177,6 +177,7 @@ function TripForm({
   const [destination, setDestination] = useState("");
   const [vehicleId, setVehicleId] = useState(VEHICLE_MODELS[0].id);
   const [fullRange, setFullRange] = useState(VEHICLE_MODELS[0].rangeKm);
+  const [rangeStandard, setRangeStandard] = useState<RangeStandard>(VEHICLE_MODELS[0].standard);
   const [minBatteryThreshold, setMinBatteryThreshold] = useState(15);
   const [targetCharge, setTargetCharge] = useState(DEFAULT_TARGET_CHARGE);
   const [searchRadius, setSearchRadius] = useState(20); // กม.
@@ -189,7 +190,10 @@ function TripForm({
   const handleVehicleChange = (id: string) => {
     setVehicleId(id);
     const v = VEHICLE_MODELS.find(m => m.id === id);
-    if (v && id !== 'custom') setFullRange(v.rangeKm);
+    if (v && id !== 'custom') {
+      setFullRange(v.rangeKm);
+      setRangeStandard(v.standard);
+    }
   };
   
   const originInputRef = useRef<HTMLInputElement>(null);
@@ -198,7 +202,7 @@ function TripForm({
   const geocodingLib = useMapsLibrary('geocoding');
   const { toast } = useToast();
 
-  const actualEpaRange = Math.round(fullRange * EPA_FACTOR);
+  const actualEpaRange = toEpaRange(fullRange, rangeStandard);
   const usableRange = Math.round(actualEpaRange * (1 - minBatteryThreshold / 100));
 
   useEffect(() => {
@@ -283,6 +287,8 @@ function TripForm({
       origin,
       destination,
       fullRange,
+      rangeStandard,
+      epaRange: actualEpaRange,
       minBatteryThreshold,
       selectedNetworks,
       vehicleName: selectedVehicle.name,
@@ -384,7 +390,7 @@ function TripForm({
                 <SelectItem key={v.id} value={v.id} className="font-medium">
                   {v.name}
                   {v.id !== 'custom' && (
-                    <span className="text-muted-foreground"> · {v.rangeKm} กม. · {v.batteryKwh} kWh</span>
+                    <span className="text-muted-foreground"> · {v.rangeKm} {v.standard} · {v.batteryKwh} kWh</span>
                   )}
                 </SelectItem>
               ))}
@@ -404,7 +410,7 @@ function TripForm({
               <div className="p-1.5 bg-primary/10 rounded-lg text-primary">
                 <Car className="w-4 h-4" />
               </div>
-              ระยะทางวิ่งสูงสุด (แบต 100%)
+              ระยะวิ่งสูงสุด (แบต 100%)
             </Label>
             <span className="text-sm font-black text-primary bg-primary/10 px-3 py-1 rounded-xl tabular-nums">{fullRange} กม.</span>
           </div>
@@ -415,6 +421,27 @@ function TripForm({
             step={10}
             className="py-1 cursor-pointer"
           />
+
+          <div className="flex items-center gap-1.5 pt-1">
+            {RANGE_STANDARDS.map(std => (
+              <button
+                key={std}
+                onClick={() => setRangeStandard(std)}
+                className={cn(
+                  "flex-1 py-1.5 rounded-xl text-[10px] font-black transition-all border",
+                  rangeStandard === std
+                    ? "bg-primary text-white border-primary shadow"
+                    : "bg-background text-muted-foreground border-border/60 hover:border-primary/40"
+                )}
+              >
+                {std}
+              </button>
+            ))}
+          </div>
+          <p className="text-[10px] font-medium text-muted-foreground text-center">
+            มาตรฐานของตัวเลขที่กรอก · วิ่งจริงโดยประมาณ{" "}
+            <span className="font-black text-green-600">{actualEpaRange} กม.</span> (EPA)
+          </p>
         </div>
 
         <div className="space-y-5 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
@@ -667,7 +694,7 @@ function MapView({
     const calculateRoute = async () => {
       setIsLoading(true);
       const {
-        origin, destination, fullRange, minBatteryThreshold, selectedNetworks,
+        origin, destination, epaRange, minBatteryThreshold, selectedNetworks,
         batteryKwh = 60, chargingKw = 60, targetCharge = 80,
         searchRadius = 20, pricePerKwh = 7.5,
       } = tripData;
@@ -695,8 +722,7 @@ function MapView({
         setSelectedStation(null);
         setChargeStats(null);
 
-        const actualEpaRange = fullRange * EPA_FACTOR;
-        const usableRangePerCharge = actualEpaRange * (1 - minBatteryThreshold / 100);
+        const usableRangePerCharge = epaRange * (1 - minBatteryThreshold / 100);
 
         const stops: any[] = [];
         const allFoundStations: any[] = [];

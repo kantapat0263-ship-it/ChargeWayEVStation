@@ -1,25 +1,47 @@
 export const ATTO3_RANGE_KM = 410; // WLTP range mix
 export const SAFETY_MARGIN_PERCENT = 15; // 15% battery safety margin
 
+// ===== EV Range Standards =====
+// แต่ละมาตรฐานวัดระยะวิ่งต่างกัน NEDC จะมองโลกสวยสุด ส่วน EPA ใกล้เคียงการขับจริงสุด
+export type RangeStandard = 'NEDC' | 'WLTP' | 'EPA' | 'CLTC';
+
+// ตัวคูณแปลงค่าที่ผู้ผลิตเคลม -> ระยะวิ่งจริง (EPA)
+// อ้างอิงสูตรเดียวกับ ev-range-converter (NEDC 480 -> WLTP 408 -> EPA 349.3)
+export const RANGE_STANDARD_TO_EPA: Record<RangeStandard, number> = {
+  EPA: 1,
+  WLTP: 0.856,
+  NEDC: 0.7277,
+  CLTC: 0.70,
+};
+
+export const RANGE_STANDARDS: RangeStandard[] = ['NEDC', 'WLTP', 'EPA', 'CLTC'];
+
+// แปลงระยะวิ่งจากมาตรฐานใด ๆ เป็นระยะวิ่งจริงแบบ EPA
+export function toEpaRange(range: number, standard: RangeStandard): number {
+  return Math.round(range * (RANGE_STANDARD_TO_EPA[standard] ?? 1));
+}
+
 // ===== EV Vehicle Presets =====
 export interface VehicleModel {
   id: string;
   name: string;
-  rangeKm: number;    // ระยะวิ่งสูงสุดที่แบต 100% (โดยประมาณ)
-  batteryKwh: number; // ความจุแบตเตอรี่ใช้งานจริง (kWh)
-  maxDcKw: number;    // กำลังชาร์จ DC เฉลี่ยที่ใช้คำนวณ (kW)
+  rangeKm: number;          // ระยะที่ผู้ผลิตเคลม (ตามมาตรฐานด้านล่าง)
+  standard: RangeStandard;  // มาตรฐานของค่าที่เคลม
+  batteryKwh: number;       // ความจุแบตเตอรี่ใช้งานจริง (kWh)
+  maxDcKw: number;          // กำลังชาร์จ DC โดยประมาณที่ใช้คำนวณ (kW)
 }
 
 export const VEHICLE_MODELS: VehicleModel[] = [
-  { id: 'atto3',   name: 'BYD ATTO 3',        rangeKm: 410, batteryKwh: 60,   maxDcKw: 80 },
-  { id: 'dolphin', name: 'BYD Dolphin',       rangeKm: 410, batteryKwh: 44.9, maxDcKw: 80 },
-  { id: 'seal',    name: 'BYD Seal',          rangeKm: 510, batteryKwh: 82.5, maxDcKw: 110 },
-  { id: 'm3',      name: 'Tesla Model 3 RWD', rangeKm: 513, batteryKwh: 60,   maxDcKw: 120 },
-  { id: 'my',      name: 'Tesla Model Y RWD', rangeKm: 455, batteryKwh: 60,   maxDcKw: 120 },
-  { id: 'goodcat', name: 'ORA Good Cat',      rangeKm: 400, batteryKwh: 47.8, maxDcKw: 60 },
-  { id: 'netav',   name: 'NETA V',            rangeKm: 384, batteryKwh: 38.5, maxDcKw: 55 },
-  { id: 'mg4',     name: 'MG4 Electric',      rangeKm: 425, batteryKwh: 51,   maxDcKw: 100 },
-  { id: 'custom',  name: 'กำหนดเอง (Custom)',  rangeKm: 410, batteryKwh: 60,   maxDcKw: 60 },
+  { id: 'atto3',    name: 'BYD ATTO 3 (Standard)', rangeKm: 410, standard: 'NEDC', batteryKwh: 49.9, maxDcKw: 80 },
+  { id: 'atto3ext', name: 'BYD ATTO 3 Extended',   rangeKm: 480, standard: 'NEDC', batteryKwh: 60.5, maxDcKw: 88 },
+  { id: 'dolphin',  name: 'BYD Dolphin',           rangeKm: 410, standard: 'NEDC', batteryKwh: 44.9, maxDcKw: 60 },
+  { id: 'seal',     name: 'BYD Seal Extended',     rangeKm: 650, standard: 'NEDC', batteryKwh: 82.5, maxDcKw: 150 },
+  { id: 'm3',       name: 'Tesla Model 3 RWD',     rangeKm: 513, standard: 'WLTP', batteryKwh: 60,   maxDcKw: 170 },
+  { id: 'my',       name: 'Tesla Model Y RWD',     rangeKm: 455, standard: 'WLTP', batteryKwh: 60,   maxDcKw: 170 },
+  { id: 'goodcat',  name: 'ORA Good Cat (Tech)',   rangeKm: 401, standard: 'NEDC', batteryKwh: 47.8, maxDcKw: 64 },
+  { id: 'netav',    name: 'NETA V',                rangeKm: 384, standard: 'NEDC', batteryKwh: 38.5, maxDcKw: 55 },
+  { id: 'mg4',      name: 'MG4 Electric',          rangeKm: 425, standard: 'WLTP', batteryKwh: 51,   maxDcKw: 117 },
+  { id: 'custom',   name: 'กำหนดเอง (Custom)',      rangeKm: 410, standard: 'NEDC', batteryKwh: 60,   maxDcKw: 60 },
 ];
 
 // ค่าไฟชาร์จ DC โดยเฉลี่ยในไทย (บาท/kWh) และเป้าหมายชาร์จกลับต่อครั้ง (%)
