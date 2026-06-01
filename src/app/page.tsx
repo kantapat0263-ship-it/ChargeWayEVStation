@@ -165,6 +165,11 @@ function formatMinutes(min: number): string {
   return `${h} ชม. ${m} นาที`;
 }
 
+// แปลง timestamp เป็นเวลานาฬิกาแบบไทย เช่น "14:35 น."
+function formatClock(ts: number): string {
+  return new Date(ts).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
+}
+
 // ตรวจสถานะเปิด/ปิดของสถานี (รองรับทั้ง isOpen() และ open_now แบบเดิม)
 function getOpenStatus(station: any): boolean | undefined {
   const oh = station?.opening_hours;
@@ -271,6 +276,7 @@ function TripForm({
   const [fullRange, setFullRange] = useState(VEHICLE_MODELS[0].rangeKm);
   const [rangeStandard, setRangeStandard] = useState<RangeStandard>(VEHICLE_MODELS[0].standard);
   const [minBatteryThreshold, setMinBatteryThreshold] = useState(15);
+  const [startSoc, setStartSoc] = useState(100); // % แบตตอนออกเดินทาง
   const [targetCharge, setTargetCharge] = useState(DEFAULT_TARGET_CHARGE);
   const [searchRadius, setSearchRadius] = useState(20); // กม.
   const [pricingNetworkId, setPricingNetworkId] = useState('ptt');
@@ -296,7 +302,8 @@ function TripForm({
   const { toast } = useToast();
 
   const actualEpaRange = toEpaRange(fullRange, rangeStandard);
-  const usableRange = Math.round(actualEpaRange * (1 - minBatteryThreshold / 100));
+  // ระยะวิ่งได้จริงในเลกแรก = จาก %แบตเริ่มต้น ลงมาถึงจุดเริ่มชาร์จ
+  const usableRange = Math.round(actualEpaRange * Math.max(0, startSoc - minBatteryThreshold) / 100);
 
   useEffect(() => {
     const handleLocationUpdate = (e: any) => {
@@ -383,6 +390,7 @@ function TripForm({
       rangeStandard,
       epaRange: actualEpaRange,
       minBatteryThreshold,
+      startSoc,
       selectedNetworks,
       vehicleName: selectedVehicle.name,
       batteryKwh: selectedVehicle.batteryKwh,
@@ -416,7 +424,7 @@ function TripForm({
     const name = tripName.trim() || `${shortPlace(origin)} → ${shortPlace(destination)}`;
     setSavedTrips(saveTrip({
       name, origin, destination, vehicleId, fullRange, rangeStandard,
-      minBatteryThreshold, targetCharge, searchRadius, pricingNetworkId, tariffMode, selectedNetworks,
+      minBatteryThreshold, startSoc, targetCharge, searchRadius, pricingNetworkId, tariffMode, selectedNetworks,
     }));
     setSaveDialogOpen(false);
     toast({ title: 'บันทึกทริปแล้ว', description: name });
@@ -429,6 +437,7 @@ function TripForm({
     setFullRange(t.fullRange);
     setRangeStandard(t.rangeStandard);
     setMinBatteryThreshold(t.minBatteryThreshold);
+    setStartSoc(t.startSoc ?? 100);
     setTargetCharge(t.targetCharge);
     setSearchRadius(t.searchRadius);
     setPricingNetworkId(t.pricingNetworkId);
@@ -442,6 +451,7 @@ function TripForm({
       rangeStandard: t.rangeStandard,
       epaRange: toEpaRange(t.fullRange, t.rangeStandard),
       minBatteryThreshold: t.minBatteryThreshold,
+      startSoc: t.startSoc ?? 100,
       selectedNetworks: t.selectedNetworks,
       vehicleName: veh.name,
       batteryKwh: veh.batteryKwh,
@@ -669,9 +679,29 @@ function TripForm({
         <div className="space-y-5 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
           <div className="flex justify-between items-center">
             <Label className="flex items-center gap-2.5 text-sm font-bold text-foreground/80">
+              <div className="p-1.5 bg-green-500/10 rounded-lg text-green-600">
+                <Battery className="w-4 h-4" />
+              </div>
+              แบตตอนเริ่มเดินทาง (%)
+            </Label>
+            <span className="text-sm font-black text-green-600 bg-green-500/10 px-3 py-1 rounded-xl tabular-nums">{startSoc}%</span>
+          </div>
+          <Slider
+            value={[startSoc]}
+            onValueChange={v => setStartSoc(Math.max(v[0], minBatteryThreshold + 5))}
+            max={100}
+            min={20}
+            step={5}
+            className="py-1 cursor-pointer"
+          />
+        </div>
+
+        <div className="space-y-5 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
+          <div className="flex justify-between items-center">
+            <Label className="flex items-center gap-2.5 text-sm font-bold text-foreground/80">
               <div className="p-1.5 bg-secondary/10 rounded-lg text-secondary">
                 <Zap className="w-4 h-4" />
-              </div> 
+              </div>
               จุดเริ่มชาร์จ (แบตเหลือ %)
             </Label>
             <span className="text-sm font-black text-secondary bg-secondary/10 px-3 py-1 rounded-xl tabular-nums">{minBatteryThreshold}%</span>
@@ -862,6 +892,7 @@ function MapView({
     networkId: string;
     tariffMode: TariffMode;
   } | null>(null);
+  const [tripEta, setTripEta] = useState<{ destTs: number; totalTripMin: number } | null>(null);
   const { toast } = useToast();
 
   // กรองสถานีให้เหลือเฉพาะฝั่งเดียวกับทิศทางเดินทาง (สลับดูทั้งหมดได้)
@@ -1006,6 +1037,7 @@ function MapView({
         origin, destination, epaRange, minBatteryThreshold, selectedNetworks,
         batteryKwh = 60, chargingKw = 60, targetCharge = 80,
         searchRadius = 20, pricingNetworkId = 'ptt', tariffMode = 'auto',
+        startSoc = 100,
       } = tripData;
       setSearchRadiusKm(searchRadius);
       const directionsService = new google.maps.DirectionsService();
@@ -1031,8 +1063,12 @@ function MapView({
         setPlannedStops([]);
         setSelectedStation(null);
         setChargeStats(null);
+        setTripEta(null);
 
-        const usableRangePerCharge = epaRange * (1 - minBatteryThreshold / 100);
+        // เลกแรก: จาก %แบตเริ่มต้น ลงมาถึงจุดเริ่มชาร์จ
+        // เลกถัดไป: จาก %เป้าหมายชาร์จ ลงมาถึงจุดเริ่มชาร์จ
+        const firstLegRange = epaRange * Math.max(0, startSoc - minBatteryThreshold) / 100;
+        const nextLegRange = epaRange * Math.max(0, targetCharge - minBatteryThreshold) / 100;
 
         const stops: any[] = [];
         const allFoundStations: any[] = [];
@@ -1045,7 +1081,8 @@ function MapView({
           currentSegmentDist += d;
           cumulativeDist += d;
 
-          if (currentSegmentDist >= usableRangePerCharge) {
+          const legLimit = stops.length === 0 ? firstLegRange : nextLegRange;
+          if (legLimit > 0 && currentSegmentDist >= legLimit) {
             const stopLoc = path[i+1];
             stops.push({ location: stopLoc, atKm: Math.round(cumulativeDist) });
             const found = await searchStationsAtLocation(stopLoc, selectedNetworks, searchRadius);
@@ -1054,33 +1091,40 @@ function MapView({
           }
         }
 
-        // คำนวณเวลาชาร์จ + ค่าไฟต่อจุด (เลือก Peak/Off-peak ตามเวลาที่คาดว่าจะถึงแต่ละจุด)
+        // คำนวณเวลาชาร์จ + ค่าไฟต่อจุด + เวลาถึง (ETA) ตามเวลาออกเดินทาง = ตอนนี้
+        const totalKm = (route.distance?.value || 0) / 1000;
+        const totalDurationSec = route.duration?.value || 0;
+        const now = Date.now();
+        const chargePercent = Math.max(0, targetCharge - minBatteryThreshold) / 100;
+        const perStopKwh = batteryKwh * chargePercent;
+        const perStopMin = chargingKw > 0 ? (perStopKwh / chargingKw) * 60 : 0;
+
+        let totalCost = 0;
+        let cumulativeChargeMin = 0;
+        const rates: number[] = [];
+        stops.forEach((s) => {
+          const driveSec = totalKm > 0 ? (s.atKm / totalKm) * totalDurationSec : 0;
+          const arrival = new Date(now + driveSec * 1000 + cumulativeChargeMin * 60000);
+          s.etaTs = arrival.getTime();           // เวลาถึงจุดแวะ (ก่อนชาร์จ)
+          cumulativeChargeMin += perStopMin;      // บวกเวลาชาร์จที่จุดนี้
+          const rate = getTariffRate(pricingNetworkId, tariffMode, arrival);
+          rates.push(rate);
+          totalCost += perStopKwh * rate;
+        });
+
+        // ETA ถึงปลายทาง = เวลาขับทั้งหมด + เวลาชาร์จรวมทุกจุด
+        const totalChargeMin = perStopMin * stops.length;
+        const destTs = now + totalDurationSec * 1000 + totalChargeMin * 60000;
+        const totalTripMin = totalDurationSec / 60 + totalChargeMin;
+        setTripEta({ destTs, totalTripMin: Math.round(totalTripMin) });
+
         if (stops.length > 0) {
-          const chargePercent = Math.max(0, targetCharge - minBatteryThreshold) / 100;
-          const perStopKwh = batteryKwh * chargePercent;
-          const perStopMin = chargingKw > 0 ? (perStopKwh / chargingKw) * 60 : 0;
-          const totalKm = (route.distance?.value || 0) / 1000;
-          const totalDurationSec = route.duration?.value || 0;
-          const now = Date.now();
-
-          let totalCost = 0;
-          let cumulativeChargeMin = 0;
-          const rates: number[] = [];
-          stops.forEach((s) => {
-            const driveSec = totalKm > 0 ? (s.atKm / totalKm) * totalDurationSec : 0;
-            const arrival = new Date(now + driveSec * 1000 + cumulativeChargeMin * 60000);
-            cumulativeChargeMin += perStopMin;
-            const rate = getTariffRate(pricingNetworkId, tariffMode, arrival);
-            rates.push(rate);
-            totalCost += perStopKwh * rate;
-          });
-
           const minRate = Math.min(...rates);
           const maxRate = Math.max(...rates);
           setChargeStats({
             perStopKwh: Math.round(perStopKwh * 10) / 10,
             perStopMin: Math.round(perStopMin),
-            totalMin: Math.round(perStopMin * stops.length),
+            totalMin: Math.round(totalChargeMin),
             totalCost: Math.round(totalCost),
             rateLabel: minRate === maxRate ? `${minRate}` : `${minRate}–${maxRate}`,
             networkId: pricingNetworkId,
@@ -1206,6 +1250,7 @@ function MapView({
       lines.push(`🔌 ชาร์จรวม ~${totalKwh} kWh · เวลาชาร์จ ~${formatMinutes(chargeStats.totalMin)}`);
       lines.push(`💰 ค่าไฟรวม ~${chargeStats.totalCost.toLocaleString()} ฿ (${netName} ${chargeStats.rateLabel} ฿/kWh)`);
     }
+    if (tripEta) lines.push(`🕒 ถึงปลายทาง ~${formatClock(tripEta.destTs)} (รวม ${formatMinutes(tripEta.totalTripMin)})`);
     return lines.join('\n');
   };
 
@@ -1261,6 +1306,7 @@ function MapView({
                 >
                   <Zap className="w-4 h-4 fill-white" />
                   <span className="text-[9px] font-black uppercase tracking-wider">จุดแวะที่ {i + 1} ({stop.atKm} กม.)</span>
+                  {stop.etaTs && <span className="text-[8px] font-bold opacity-90">~{formatClock(stop.etaTs)}</span>}
                 </div>
               </AdvancedMarker>
             );
@@ -1473,7 +1519,25 @@ function MapView({
                   <p className="text-xl font-black text-primary">{routeInfo.duration}</p>
                 </div>
               </div>
-              
+
+              {tripEta && (
+                <div className="flex items-center justify-between gap-3 bg-primary/5 border border-primary/15 rounded-2xl p-4">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="bg-primary/10 p-2 rounded-xl text-primary shrink-0">
+                      <Timer className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] text-muted-foreground uppercase font-black">ถึงปลายทางโดยประมาณ</p>
+                      <p className="text-[11px] font-bold text-muted-foreground">
+                        รวมเวลาเดินทาง {formatMinutes(tripEta.totalTripMin)}
+                        {chargeStats ? ' (รวมชาร์จ)' : ''}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-lg font-black text-primary tabular-nums shrink-0">{formatClock(tripEta.destTs)}</p>
+                </div>
+              )}
+
               {plannedStops.length > 0 ? (
                 <div className="space-y-4">
                   <div className="bg-secondary/5 p-5 rounded-[1.5rem] border-2 border-dashed border-secondary/30 flex flex-col gap-4">

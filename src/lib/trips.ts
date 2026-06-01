@@ -11,6 +11,7 @@ export interface SavedTrip {
   fullRange: number;
   rangeStandard: RangeStandard;
   minBatteryThreshold: number;
+  startSoc?: number;
   targetCharge: number;
   searchRadius: number;
   pricingNetworkId: string;
