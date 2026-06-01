@@ -67,6 +67,9 @@ import {
   Copy,
   Check,
   X,
+  Volume2,
+  VolumeX,
+  Gauge as GaugeIcon,
 } from 'lucide-react';
 import {
   CHARGING_NETWORKS,
@@ -904,12 +907,36 @@ function MapView({
   const [followCamera, setFollowCamera] = useState(true);
   const [nearAlert, setNearAlert] = useState<{ stopNo: number; km: number } | null>(null);
   const [destinationLatLng, setDestinationLatLng] = useState<google.maps.LatLng | null>(null);
+  const [soundOn, setSoundOn] = useState(true);
   const firedRef = useRef<{ idx: number; t5: boolean; t2: boolean }>({ idx: 0, t5: false, t2: false });
   const isDrivingRef = useRef(false);
+  const audioRef = useRef<AudioContext | null>(null);
   useEffect(() => { isDrivingRef.current = isDriving; }, [isDriving]);
 
   const geo = useGeoWatch(isDriving);
   const wake = useWakeLock(isDriving);
+
+  // เสียงเตือนสั้น ๆ (Web Audio) — สร้าง context ตอนกดเริ่มขับ (เป็น user gesture)
+  const beep = useCallback((freq = 880, ms = 180) => {
+    if (!soundOn) return;
+    try {
+      const ctx = audioRef.current;
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + ms / 1000);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + ms / 1000);
+    } catch {
+      /* ignore */
+    }
+  }, [soundOn]);
 
   // รายการเป้าหมายตามลำดับ: จุดแวะชาร์จทั้งหมด + ปลายทางเป็นเป้าสุดท้าย
   const driveTargets: google.maps.LatLng[] = [
@@ -922,6 +949,14 @@ function MapView({
     setFollowCamera(true);
     setNearAlert(null);
     firedRef.current = { idx: 0, t5: false, t2: false };
+    // เปิด AudioContext ตอนนี้ (อยู่ใน user gesture) เพื่อให้เสียงเตือนเล่นได้
+    try {
+      if (!audioRef.current) {
+        const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+        if (AC) audioRef.current = new AC();
+      }
+      audioRef.current?.resume?.();
+    } catch { /* ignore */ }
     setIsDriving(true);
     map?.setZoom(16);
   };
@@ -1194,10 +1229,12 @@ function MapView({
       }
       if (meters <= 5000 && !firedRef.current.t5) {
         firedRef.current.t5 = true;
+        beep(880);
         toast({ title: `ใกล้ถึงจุดชาร์จที่ ${nextStopIndex + 1}`, description: 'อีกประมาณ 5 กม.' });
       }
       if (meters <= 2000 && !firedRef.current.t2) {
         firedRef.current.t2 = true;
+        beep(1100); setTimeout(() => beep(1100), 220);
         toast({ title: `ใกล้ถึงจุดชาร์จที่ ${nextStopIndex + 1} แล้ว!`, description: 'อีกประมาณ 2 กม.' });
       }
       setNearAlert(meters <= 5000 ? { stopNo: nextStopIndex + 1, km: Math.max(0.1, meters / 1000) } : null);
@@ -1205,10 +1242,12 @@ function MapView({
 
     if (meters <= 400) {
       if (isChargingStop) {
+        beep(660); setTimeout(() => beep(880), 200); setTimeout(() => beep(1100), 400);
         toast({ title: `ถึงจุดแวะที่ ${nextStopIndex + 1} แล้ว`, description: 'พร้อมชาร์จได้เลย' });
         setNextStopIndex(i => i + 1);
         setNearAlert(null);
       } else {
+        beep(660); setTimeout(() => beep(880), 200); setTimeout(() => beep(1100), 400);
         toast({ title: 'ถึงปลายทางแล้ว 🎉', description: 'เดินทางปลอดภัยนะครับ' });
         stopDriving();
       }
@@ -1446,13 +1485,24 @@ function MapView({
                   <span className="text-[9px] font-bold text-muted-foreground">(หน้าจออาจดับ)</span>
                 )}
               </div>
-              <Button
-                onClick={stopDriving}
-                variant="outline"
-                className="pointer-events-auto h-11 rounded-2xl font-black gap-1.5 bg-white/90 dark:bg-card/90 backdrop-blur-md shadow-lg"
-              >
-                <X className="w-4 h-4" /> ออกจากโหมดขับ
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={() => setSoundOn(v => !v)}
+                  variant="outline"
+                  size="icon"
+                  title={soundOn ? 'ปิดเสียงเตือน' : 'เปิดเสียงเตือน'}
+                  className="pointer-events-auto h-11 w-11 rounded-2xl bg-white/90 dark:bg-card/90 backdrop-blur-md shadow-lg shrink-0"
+                >
+                  {soundOn ? <Volume2 className="w-4 h-4 text-primary" /> : <VolumeX className="w-4 h-4 text-muted-foreground" />}
+                </Button>
+                <Button
+                  onClick={stopDriving}
+                  variant="outline"
+                  className="pointer-events-auto h-11 rounded-2xl font-black gap-1.5 bg-white/90 dark:bg-card/90 backdrop-blur-md shadow-lg"
+                >
+                  <X className="w-4 h-4" /> ออกจากโหมดขับ
+                </Button>
+              </div>
             </div>
 
             {/* การ์ดล่าง: จุดถัดไป + ระยะ + เตือน */}
@@ -1472,24 +1522,42 @@ function MapView({
                   <LocateFixed className="w-4 h-4 text-primary" /> กลับไปที่รถ
                 </Button>
               )}
-              <div className="pointer-events-auto bg-white/95 dark:bg-card/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-border/40 px-6 py-3 flex items-center gap-4">
+              <div className="pointer-events-auto bg-white/95 dark:bg-card/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-border/40 px-5 py-3 flex items-center gap-4">
                 <div className="bg-blue-600 p-2.5 rounded-2xl shrink-0">
                   <Navigation className="w-5 h-5 text-white fill-white" />
                 </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-black text-muted-foreground uppercase tracking-wider">
-                    {nextStopIndex < plannedStops.length ? `จุดชาร์จถัดไป (ที่ ${nextStopIndex + 1})` : 'มุ่งหน้าปลายทาง'}
-                  </p>
-                  <p className="text-3xl font-black text-foreground tabular-nums leading-tight">
-                    {(() => {
-                      const target = driveTargets[nextStopIndex];
-                      const geom = (window as any).google?.maps?.geometry?.spherical;
-                      if (!geo.ready || !target || !geom) return '— กม.';
-                      const km = geom.computeDistanceBetween(new google.maps.LatLng(geo.lat, geo.lng), target) / 1000;
-                      return km >= 1 ? `${km.toFixed(1)} กม.` : `${Math.round(km * 1000)} ม.`;
-                    })()}
-                  </p>
-                </div>
+                {(() => {
+                  const target = driveTargets[nextStopIndex];
+                  const geom = (window as any).google?.maps?.geometry?.spherical;
+                  let meters: number | null = null;
+                  if (geo.ready && target && geom) {
+                    meters = geom.computeDistanceBetween(new google.maps.LatLng(geo.lat, geo.lng), target);
+                  }
+                  const distLabel = meters == null ? '— กม.'
+                    : meters >= 1000 ? `${(meters / 1000).toFixed(1)} กม.` : `${Math.round(meters)} ม.`;
+                  const spd = geo.speed ?? 0;
+                  const etaMin = meters != null && spd > 3 ? Math.round((meters / 1000) / spd * 60) : null;
+                  return (
+                    <>
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-black text-muted-foreground uppercase tracking-wider">
+                          {nextStopIndex < plannedStops.length ? `จุดชาร์จถัดไป (ที่ ${nextStopIndex + 1})` : 'มุ่งหน้าปลายทาง'}
+                        </p>
+                        <p className="text-3xl font-black text-foreground tabular-nums leading-tight">{distLabel}</p>
+                        {etaMin != null && (
+                          <p className="text-[11px] font-bold text-blue-600">อีก ~{formatMinutes(etaMin)}</p>
+                        )}
+                      </div>
+                      <div className="pl-4 border-l border-border/50 text-center shrink-0">
+                        <p className="text-[9px] font-black text-muted-foreground uppercase flex items-center gap-1 justify-center">
+                          <GaugeIcon className="w-3 h-3" /> ความเร็ว
+                        </p>
+                        <p className="text-2xl font-black text-foreground tabular-nums leading-tight">{geo.speed ?? 0}</p>
+                        <p className="text-[9px] font-bold text-muted-foreground">กม./ชม.</p>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
           </div>
