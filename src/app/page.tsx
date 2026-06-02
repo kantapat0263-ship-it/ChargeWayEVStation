@@ -71,6 +71,10 @@ import {
   VolumeX,
   Gauge as GaugeIcon,
   ChevronDown,
+  Mic,
+  Home,
+  Briefcase,
+  Clock,
 } from 'lucide-react';
 import {
   CHARGING_NETWORKS,
@@ -88,6 +92,7 @@ import {
   UNKNOWN_NETWORK,
 } from '@/lib/constants';
 import { type SavedTrip, loadTrips, saveTrip, deleteTrip } from '@/lib/trips';
+import { type Favorites, type FavKind, loadRecents, addRecent, loadFavorites, setFavorite, clearFavorite } from '@/lib/places';
 import { useGeoWatch } from '@/hooks/use-geo-watch';
 import { useWakeLock } from '@/hooks/use-wake-lock';
 import { cn } from '@/lib/utils';
@@ -334,6 +339,54 @@ function TripForm({
   const geocodingLib = useMapsLibrary('geocoding');
   const { toast } = useToast();
 
+  // ===== ปลายทางง่ายขึ้น: เสียง / ล่าสุด / โปรด =====
+  const [recents, setRecents] = useState<string[]>([]);
+  const [favorites, setFavorites] = useState<Favorites>({});
+  const [listening, setListening] = useState<'origin' | 'destination' | null>(null);
+  useEffect(() => { setRecents(loadRecents()); setFavorites(loadFavorites()); }, []);
+
+  // ตั้งค่า/ล้าง รายการโปรด (บ้าน/ที่ทำงาน) จากค่าปลายทางปัจจุบัน
+  const handleSetFavorite = (kind: FavKind) => {
+    const addr = destination.trim();
+    if (!addr) {
+      toast({ variant: 'destructive', title: 'ยังไม่มีปลายทาง', description: 'ใส่ปลายทางก่อน แล้วกดบันทึกเป็นรายการโปรด' });
+      return;
+    }
+    setFavorites(setFavorite(kind, addr));
+    toast({ title: kind === 'home' ? 'บันทึกเป็นบ้านแล้ว' : 'บันทึกเป็นที่ทำงานแล้ว', description: addr });
+  };
+  const handleClearFavorite = (kind: FavKind) => setFavorites(clearFavorite(kind));
+
+  // ค้นหาด้วยเสียง (Web Speech Recognition)
+  const startVoice = (target: 'origin' | 'destination') => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      toast({ variant: 'destructive', title: 'อุปกรณ์ไม่รองรับเสียง', description: 'เบราว์เซอร์นี้ยังไม่รองรับการค้นหาด้วยเสียง ลองพิมพ์แทนนะครับ' });
+      return;
+    }
+    try {
+      const rec = new SR();
+      rec.lang = 'th-TH';
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      setListening(target);
+      rec.onresult = (e: any) => {
+        const text = e.results?.[0]?.[0]?.transcript?.trim();
+        if (text) {
+          if (target === 'origin') setOrigin(text); else setDestination(text);
+        }
+      };
+      rec.onerror = () => {
+        setListening(null);
+        toast({ variant: 'destructive', title: 'ฟังเสียงไม่สำเร็จ', description: 'ลองใหม่อีกครั้ง หรืออนุญาตไมโครโฟน' });
+      };
+      rec.onend = () => setListening(null);
+      rec.start();
+    } catch {
+      setListening(null);
+    }
+  };
+
   const actualEpaRange = toEpaRange(fullRange, rangeStandard);
   // ระยะวิ่งได้จริงในเลกแรก = จาก %แบตเริ่มต้น ลงมาถึงจุดเริ่มชาร์จ
   const usableRange = Math.round(actualEpaRange * Math.max(0, startSoc - minBatteryThreshold) / 100);
@@ -416,6 +469,7 @@ function TripForm({
 
   const handlePlanTrip = () => {
     if (!origin || !destination) return;
+    setRecents(addRecent(destination)); // จำปลายทางล่าสุด
     onPlanTrip({
       origin,
       destination,
@@ -579,13 +633,24 @@ function TripForm({
               <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-primary transition-colors">
                 <MapPin className="w-4.5 h-4.5" />
               </div>
-              <Input 
+              <Input
                 ref={originInputRef}
-                placeholder="จุดเริ่มต้น" 
-                value={origin} 
+                placeholder="จุดเริ่มต้น"
+                value={origin}
                 onChange={e => setOrigin(e.target.value)}
-                className="pl-11 h-13 rounded-2xl border-border/80 focus:ring-primary/20 bg-background/50 text-sm font-medium transition-all"
+                className="pl-11 pr-11 h-13 rounded-2xl border-border/80 focus:ring-primary/20 bg-background/50 text-sm font-medium transition-all"
               />
+              <button
+                type="button"
+                title="ค้นหาด้วยเสียง"
+                onClick={() => startVoice('origin')}
+                className={cn(
+                  "absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-colors",
+                  listening === 'origin' ? "text-red-500 bg-red-500/10 animate-pulse" : "text-muted-foreground hover:text-primary hover:bg-primary/10"
+                )}
+              >
+                <Mic className="w-4.5 h-4.5" />
+              </button>
             </div>
             <div className="flex gap-1.5 shrink-0">
               <Button
@@ -613,13 +678,24 @@ function TripForm({
               <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-secondary transition-colors">
                 <Navigation className="w-4.5 h-4.5" />
               </div>
-              <Input 
+              <Input
                 ref={destinationInputRef}
-                placeholder="ปลายทาง" 
-                value={destination} 
+                placeholder="ปลายทาง"
+                value={destination}
                 onChange={e => setDestination(e.target.value)}
-                className="pl-11 h-13 rounded-2xl border-border/80 focus:ring-secondary/20 bg-background/50 text-sm font-medium transition-all"
+                className="pl-11 pr-11 h-13 rounded-2xl border-border/80 focus:ring-secondary/20 bg-background/50 text-sm font-medium transition-all"
               />
+              <button
+                type="button"
+                title="ค้นหาด้วยเสียง"
+                onClick={() => startVoice('destination')}
+                className={cn(
+                  "absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-colors",
+                  listening === 'destination' ? "text-red-500 bg-red-500/10 animate-pulse" : "text-muted-foreground hover:text-secondary hover:bg-secondary/10"
+                )}
+              >
+                <Mic className="w-4.5 h-4.5" />
+              </button>
             </div>
             <Button
               variant={isPickingOnMap === 'destination' ? 'default' : 'outline'}
@@ -629,6 +705,57 @@ function TripForm({
             >
               <Crosshair className="w-5 h-5" />
             </Button>
+          </div>
+
+          {/* ทางลัดใส่ปลายทาง: รายการโปรด + ปลายทางล่าสุด */}
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            {/* บ้าน */}
+            {favorites.home ? (
+              <button
+                type="button"
+                onClick={() => setDestination(favorites.home!)}
+                title={favorites.home}
+                className="group inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1.5 rounded-xl bg-secondary/10 text-secondary text-[11px] font-bold hover:bg-secondary/20 transition-colors max-w-[48%]"
+              >
+                <Home className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">บ้าน</span>
+                <span onClick={(e) => { e.stopPropagation(); handleClearFavorite('home'); }} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></span>
+              </button>
+            ) : (
+              <button type="button" onClick={() => handleSetFavorite('home')} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-dashed border-border text-muted-foreground text-[11px] font-bold hover:bg-muted/40 transition-colors">
+                <Home className="w-3.5 h-3.5" /> ตั้งบ้าน
+              </button>
+            )}
+            {/* ที่ทำงาน */}
+            {favorites.work ? (
+              <button
+                type="button"
+                onClick={() => setDestination(favorites.work!)}
+                title={favorites.work}
+                className="group inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1.5 rounded-xl bg-primary/10 text-primary text-[11px] font-bold hover:bg-primary/20 transition-colors max-w-[48%]"
+              >
+                <Briefcase className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">ที่ทำงาน</span>
+                <span onClick={(e) => { e.stopPropagation(); handleClearFavorite('work'); }} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></span>
+              </button>
+            ) : (
+              <button type="button" onClick={() => handleSetFavorite('work')} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-dashed border-border text-muted-foreground text-[11px] font-bold hover:bg-muted/40 transition-colors">
+                <Briefcase className="w-3.5 h-3.5" /> ตั้งที่ทำงาน
+              </button>
+            )}
+            {/* ปลายทางล่าสุด */}
+            {recents.slice(0, 4).map((addr, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setDestination(addr)}
+                title={addr}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-muted/50 text-foreground/80 text-[11px] font-medium hover:bg-muted transition-colors max-w-[48%]"
+              >
+                <Clock className="w-3 h-3 shrink-0 text-muted-foreground" />
+                <span className="truncate">{addr.split(',')[0]}</span>
+              </button>
+            ))}
           </div>
         </div>
       </section>
