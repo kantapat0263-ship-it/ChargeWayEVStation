@@ -971,6 +971,46 @@ function MapView({
     }
   }, [soundOn]);
 
+  // เสียงพูดภาษาไทย (Web Speech API)
+  const thVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
+  const speak = useCallback((text: string) => {
+    if (!soundOn) return;
+    try {
+      const synth = window.speechSynthesis;
+      if (!synth) return;
+      synth.cancel(); // ตัดข้อความเก่าที่ค้างอยู่ พูดอันล่าสุดทันที
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'th-TH';
+      u.rate = 1; u.pitch = 1; u.volume = 1;
+      const voice = thVoiceRef.current
+        ?? synth.getVoices().find(v => v.lang?.toLowerCase().startsWith('th'))
+        ?? null;
+      if (voice) { thVoiceRef.current = voice; u.voice = voice; }
+      synth.speak(u);
+    } catch {
+      /* ignore */
+    }
+  }, [soundOn]);
+
+  // โหลดรายชื่อเสียงไว้ล่วงหน้า (บางเบราว์เซอร์โหลดแบบ async)
+  useEffect(() => {
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    const load = () => {
+      const v = synth.getVoices().find(vv => vv.lang?.toLowerCase().startsWith('th'));
+      if (v) thVoiceRef.current = v;
+    };
+    load();
+    synth.addEventListener?.('voiceschanged', load);
+    return () => synth.removeEventListener?.('voiceschanged', load);
+  }, []);
+
+  // เตือน: ปี๊บนำ 1 จังหวะ แล้วพูดข้อความไทยตาม
+  const announce = useCallback((freq: number, text: string) => {
+    beep(freq);
+    setTimeout(() => speak(text), 220);
+  }, [beep, speak]);
+
   // รายการเป้าหมายตามลำดับ: จุดแวะชาร์จทั้งหมด + ปลายทางเป็นเป้าสุดท้าย
   const driveTargets: google.maps.LatLng[] = [
     ...plannedStops.map((s: any) => s.location),
@@ -990,6 +1030,8 @@ function MapView({
       }
       audioRef.current?.resume?.();
     } catch { /* ignore */ }
+    // ปลุก TTS ภายใน user gesture (จำเป็นบน iOS) + พูดทักทายเริ่มนำทาง
+    speak('เริ่มโหมดขับขี่ ขับขี่ปลอดภัยนะครับ');
     setIsDriving(true);
     map?.setZoom(16);
   };
@@ -997,6 +1039,7 @@ function MapView({
   const stopDriving = () => {
     setIsDriving(false);
     setNearAlert(null);
+    try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
   };
 
   // สถานีที่จะแสดง: ค่าเริ่มต้นเฉพาะฝั่งเดียวกับทิศทางขับ (เผื่อไม่มีข้อมูลฝั่งก็แสดง)
@@ -1295,12 +1338,12 @@ function MapView({
       }
       if (meters <= 5000 && !firedRef.current.t5) {
         firedRef.current.t5 = true;
-        beep(880);
+        announce(880, `อีกประมาณ 5 กิโลเมตร ถึงจุดชาร์จที่ ${nextStopIndex + 1}`);
         toast({ title: `ใกล้ถึงจุดชาร์จที่ ${nextStopIndex + 1}`, description: 'อีกประมาณ 5 กม.' });
       }
       if (meters <= 2000 && !firedRef.current.t2) {
         firedRef.current.t2 = true;
-        beep(1100); setTimeout(() => beep(1100), 220);
+        announce(1100, `อีกประมาณ 2 กิโลเมตร เตรียมเข้าจุดชาร์จที่ ${nextStopIndex + 1}`);
         toast({ title: `ใกล้ถึงจุดชาร์จที่ ${nextStopIndex + 1} แล้ว!`, description: 'อีกประมาณ 2 กม.' });
       }
       setNearAlert(meters <= 5000 ? { stopNo: nextStopIndex + 1, km: Math.max(0.1, meters / 1000) } : null);
@@ -1308,12 +1351,12 @@ function MapView({
 
     if (meters <= 400) {
       if (isChargingStop) {
-        beep(660); setTimeout(() => beep(880), 200); setTimeout(() => beep(1100), 400);
+        announce(988, `ถึงจุดชาร์จที่ ${nextStopIndex + 1} แล้ว พร้อมชาร์จได้เลย`);
         toast({ title: `ถึงจุดแวะที่ ${nextStopIndex + 1} แล้ว`, description: 'พร้อมชาร์จได้เลย' });
         setNextStopIndex(i => i + 1);
         setNearAlert(null);
       } else {
-        beep(660); setTimeout(() => beep(880), 200); setTimeout(() => beep(1100), 400);
+        announce(988, 'ถึงปลายทางแล้ว เดินทางปลอดภัยนะครับ');
         toast({ title: 'ถึงปลายทางแล้ว 🎉', description: 'เดินทางปลอดภัยนะครับ' });
         stopDriving();
       }
@@ -1562,7 +1605,7 @@ function MapView({
               </div>
               <div className="flex items-center gap-2">
                 <Button
-                  onClick={() => setSoundOn(v => !v)}
+                  onClick={() => setSoundOn(v => { if (v) { try { window.speechSynthesis?.cancel(); } catch { /* ignore */ } } return !v; })}
                   variant="outline"
                   size="icon"
                   title={soundOn ? 'ปิดเสียงเตือน' : 'เปิดเสียงเตือน'}
