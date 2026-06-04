@@ -75,6 +75,7 @@ import {
   Home,
   Briefcase,
   Clock,
+  Compass,
 } from 'lucide-react';
 import {
   CHARGING_NETWORKS,
@@ -1065,6 +1066,7 @@ function MapView({
   const [isDriving, setIsDriving] = useState(false);
   const [nextStopIndex, setNextStopIndex] = useState(0);
   const [followCamera, setFollowCamera] = useState(true);
+  const [headingUp, setHeadingUp] = useState(false); // false = ล็อกทิศเหนือ, true = หันหัวไปด้านหน้า
   const [nearAlert, setNearAlert] = useState<{ stopNo: number; km: number } | null>(null);
   const [destinationLatLng, setDestinationLatLng] = useState<google.maps.LatLng | null>(null);
   const [soundOn, setSoundOn] = useState(true);
@@ -1167,6 +1169,7 @@ function MapView({
     setIsDriving(false);
     setNearAlert(null);
     try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
+    try { map?.setHeading?.(0); } catch { /* ignore */ }
   };
 
   // สถานีที่จะแสดง: ค่าเริ่มต้นเฉพาะฝั่งเดียวกับทิศทางขับ (เผื่อไม่มีข้อมูลฝั่งก็แสดง)
@@ -1434,12 +1437,21 @@ function MapView({
     calculateRoute();
   }, [tripData, routesLib, directionsRenderer, searchStationsAtLocation, map]);
 
-  // กล้องเลื่อนตามรถขณะขับ (North-up)
+  // กล้องเลื่อนตามรถขณะขับ — North-up หรือ heading-up (หมุนตามทิศที่วิ่ง)
   useEffect(() => {
     if (isDriving && followCamera && geo.ready && map) {
       map.panTo({ lat: geo.lat, lng: geo.lng });
+      // หมุนแผนที่ให้ทิศที่วิ่งชี้ขึ้น เฉพาะตอนเคลื่อนที่ (กันหมุนมั่วตอนจอด/ทิศแกว่ง)
+      if (headingUp && geo.heading != null && (geo.speed ?? 0) > 3) {
+        try { map.setHeading?.(geo.heading); } catch { /* ignore */ }
+      }
     }
-  }, [geo.lat, geo.lng, geo.ready, isDriving, followCamera, map]);
+  }, [geo.lat, geo.lng, geo.heading, geo.speed, geo.ready, isDriving, followCamera, headingUp, map]);
+
+  // กลับทิศเหนือเมื่อปิด heading-up
+  useEffect(() => {
+    if (!headingUp && map) { try { map.setHeading?.(0); } catch { /* ignore */ } }
+  }, [headingUp, map]);
 
   // ผู้ใช้ลากแผนที่เอง → ปิดการเลื่อนตาม (มีปุ่ม "กลับไปที่รถ" ให้กดเปิดใหม่)
   useEffect(() => {
@@ -1602,7 +1614,7 @@ function MapView({
                 <span className="absolute inset-0 rounded-full bg-blue-500/30 animate-ping" />
                 <div
                   className="relative w-9 h-9 rounded-full bg-blue-600 border-2 border-white shadow-xl flex items-center justify-center"
-                  style={{ transform: `rotate(${geo.heading ?? 0}deg)` }}
+                  style={{ transform: `rotate(${headingUp ? 0 : (geo.heading ?? 0)}deg)` }}
                 >
                   <Navigation className="w-4 h-4 text-white fill-white" />
                 </div>
@@ -1731,6 +1743,18 @@ function MapView({
                 )}
               </div>
               <div className="flex items-center gap-2">
+                <Button
+                  onClick={() => setHeadingUp(v => !v)}
+                  variant="outline"
+                  size="icon"
+                  title={headingUp ? 'มุมมอง: หันหัวไปด้านหน้า (กดเพื่อล็อกทิศเหนือ)' : 'มุมมอง: ล็อกทิศเหนือ (กดเพื่อหันหัวไปด้านหน้า)'}
+                  className={cn(
+                    "pointer-events-auto h-11 w-11 rounded-2xl backdrop-blur-md shadow-lg shrink-0",
+                    headingUp ? "bg-primary text-white" : "bg-white/90 dark:bg-card/90"
+                  )}
+                >
+                  {headingUp ? <Navigation className="w-4 h-4 fill-white" /> : <Compass className="w-4 h-4 text-primary" />}
+                </Button>
                 <Button
                   onClick={() => setSoundOn(v => { if (v) { try { window.speechSynthesis?.cancel(); } catch { /* ignore */ } } return !v; })}
                   variant="outline"
