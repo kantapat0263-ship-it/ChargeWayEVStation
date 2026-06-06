@@ -95,7 +95,7 @@ import {
 } from '@/lib/constants';
 import { type SavedTrip, loadTrips, saveTrip, deleteTrip } from '@/lib/trips';
 import { type Favorites, type FavKind, loadRecents, addRecent, loadFavorites, setFavorite, clearFavorite } from '@/lib/places';
-import { speedRangeFactor, tempRangeFactor, fetchTemperature } from '@/lib/range-model';
+import { speedRangeFactor, tempRangeFactor, fetchTemperature, chargeMinutes } from '@/lib/range-model';
 import { useGeoWatch } from '@/hooks/use-geo-watch';
 import { useWakeLock } from '@/hooks/use-wake-lock';
 import { cn } from '@/lib/utils';
@@ -1438,7 +1438,8 @@ function MapView({
         const now = Date.now();
         const chargePercent = Math.max(0, targetCharge - minBatteryThreshold) / 100;
         const perStopKwh = batteryKwh * chargePercent;
-        const perStopMin = chargingKw > 0 ? (perStopKwh / chargingKw) * 60 : 0;
+        // เวลาชาร์จคิดตามกราฟชาร์จจริง (ช้าลงช่วงท้าย) แทนแบบเชิงเส้น
+        const perStopMin = chargeMinutes(batteryKwh, chargingKw, minBatteryThreshold, targetCharge);
 
         let totalCost = 0;
         let cumulativeChargeMin = 0;

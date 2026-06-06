@@ -45,3 +45,32 @@ export async function fetchTemperature(lat: number, lng: number): Promise<number
     return null;
   }
 }
+
+// ===== กราฟชาร์จ (Charging Curve / Taper) =====
+// เส้นโค้งมาตรฐาน: สัดส่วนของกำลังชาร์จสูงสุด เทียบกับ %แบต (SoC)
+// แรงตอนแบตน้อย แล้วค่อย ๆ ลดลง โดยเฉพาะหลัง 80% (BMS หรี่ไฟกันแบตเสื่อม)
+const CHARGE_CURVE: [number, number][] = [
+  [0, 0.85], [10, 1.0], [20, 1.0], [30, 0.95], [40, 0.85], [50, 0.72],
+  [60, 0.60], [70, 0.48], [80, 0.38], [90, 0.25], [100, 0.15],
+];
+
+// ประมาณกำลังชาร์จเฉลี่ยที่ SoC หนึ่ง ๆ (สัดส่วนของ kW สูงสุด)
+export function chargePowerFraction(soc: number): number {
+  return lerpTable(soc, CHARGE_CURVE);
+}
+
+// เวลาชาร์จ (นาที) จาก fromSoc -> toSoc โดยรวมผลของกราฟชาร์จที่ค่อย ๆ ช้าลง
+// คำนวณทีละช่วง SoC แล้วบวกเวลารวมกัน (integrate)
+export function chargeMinutes(batteryKwh: number, maxDcKw: number, fromSoc: number, toSoc: number): number {
+  if (maxDcKw <= 0 || batteryKwh <= 0 || toSoc <= fromSoc) return 0;
+  const step = 1; // เดินทีละ 1% SoC
+  let minutes = 0;
+  for (let soc = fromSoc; soc < toSoc; soc += step) {
+    const frac = chargePowerFraction(soc + step / 2);
+    const power = Math.max(maxDcKw * frac, 1);   // kW จริงในช่วงนี้
+    const energy = batteryKwh * (step / 100);     // kWh ที่เติมในช่วงนี้
+    minutes += (energy / power) * 60;
+  }
+  return minutes;
+}
+
