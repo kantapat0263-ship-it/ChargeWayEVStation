@@ -76,6 +76,7 @@ import {
   Briefcase,
   Clock,
   Compass,
+  Thermometer,
 } from 'lucide-react';
 import {
   CHARGING_NETWORKS,
@@ -94,6 +95,7 @@ import {
 } from '@/lib/constants';
 import { type SavedTrip, loadTrips, saveTrip, deleteTrip } from '@/lib/trips';
 import { type Favorites, type FavKind, loadRecents, addRecent, loadFavorites, setFavorite, clearFavorite } from '@/lib/places';
+import { speedRangeFactor, tempRangeFactor, fetchTemperature } from '@/lib/range-model';
 import { useGeoWatch } from '@/hooks/use-geo-watch';
 import { useWakeLock } from '@/hooks/use-wake-lock';
 import { cn } from '@/lib/utils';
@@ -322,6 +324,8 @@ function TripForm({
   const [tariffMode, setTariffMode] = useState<TariffMode>('auto');
   const [selectedNetworks, setSelectedNetworks] = useState<string[]>(CHARGING_NETWORKS.map(n => n.id));
   const [isLocating, setIsLocating] = useState(false);
+  const [tempMode, setTempMode] = useState<'auto' | 'manual'>('auto'); // อุณหภูมิเฉลี่ย: อัตโนมัติ/กำหนดเอง
+  const [manualTemp, setManualTemp] = useState(32); // °C (ใช้เมื่อ tempMode = manual)
 
   const selectedVehicle = VEHICLE_MODELS.find(v => v.id === vehicleId) ?? VEHICLE_MODELS[0];
 
@@ -487,6 +491,8 @@ function TripForm({
       searchRadius,
       pricingNetworkId,
       tariffMode,
+      tempMode,
+      manualTemp,
     });
   };
 
@@ -912,6 +918,51 @@ function TripForm({
           />
         </div>
 
+        {/* ปรับระยะวิ่งตามอุณหภูมิ + ความเร็ว (ความเร็วเฉลี่ยดึงจากเส้นทางอัตโนมัติ) */}
+        <div className="space-y-4 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
+          <div className="flex justify-between items-center">
+            <Label className="flex items-center gap-2.5 text-sm font-bold text-foreground/80">
+              <div className="p-1.5 bg-orange-500/10 rounded-lg text-orange-500">
+                <Thermometer className="w-4 h-4" />
+              </div>
+              อุณหภูมิเฉลี่ย (ปรับระยะวิ่ง)
+            </Label>
+            <div className="flex gap-1 bg-background/60 p-0.5 rounded-xl border border-border/50">
+              {(['auto', 'manual'] as const).map(m => (
+                <button
+                  key={m}
+                  onClick={() => setTempMode(m)}
+                  className={cn(
+                    "px-2.5 py-1 rounded-lg text-[11px] font-black transition-colors",
+                    tempMode === m ? "bg-orange-500 text-white shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {m === 'auto' ? 'อัตโนมัติ' : 'กำหนดเอง'}
+                </button>
+              ))}
+            </div>
+          </div>
+          {tempMode === 'manual' ? (
+            <>
+              <div className="flex justify-end">
+                <span className="text-sm font-black text-orange-500 bg-orange-500/10 px-3 py-1 rounded-xl tabular-nums">{manualTemp}°C</span>
+              </div>
+              <Slider
+                value={[manualTemp]}
+                onValueChange={v => setManualTemp(v[0])}
+                max={45}
+                min={10}
+                step={1}
+                className="py-1 cursor-pointer"
+              />
+            </>
+          ) : (
+            <p className="text-[11px] font-medium text-muted-foreground leading-relaxed">
+              ดึงอุณหภูมิจริงตามเส้นทางให้อัตโนมัติ · ความเร็วเฉลี่ยคำนวณจากเส้นทาง — แสดงผลที่ปรับในการ์ดสรุป
+            </p>
+          )}
+        </div>
+
         <div className="space-y-5 bg-muted/30 p-5 rounded-[1.5rem] border border-border/40 hover:bg-muted/40 transition-colors">
           <div className="flex justify-between items-center">
             <Label className="flex items-center gap-2.5 text-sm font-bold text-foreground/80">
@@ -1057,6 +1108,10 @@ function MapView({
     tariffMode: TariffMode;
   } | null>(null);
   const [tripEta, setTripEta] = useState<{ destTs: number; totalTripMin: number } | null>(null);
+  const [rangeAdjust, setRangeAdjust] = useState<{
+    baseRange: number; effRange: number; reducePct: number; tempC: number; avgKmh: number;
+    tempSource: 'auto' | 'manual' | 'fallback';
+  } | null>(null);
   const { toast } = useToast();
 
   // กรองสถานีให้เหลือเฉพาะฝั่งเดียวกับทิศทางเดินทาง (สลับดูทั้งหมดได้)
@@ -1287,7 +1342,7 @@ function MapView({
         origin, destination, epaRange, minBatteryThreshold, selectedNetworks,
         batteryKwh = 60, chargingKw = 60, targetCharge = 80,
         searchRadius = 20, pricingNetworkId = 'ptt', tariffMode = 'auto',
-        startSoc = 100,
+        startSoc = 100, tempMode = 'auto', manualTemp = 32,
       } = tripData;
       setSearchRadiusKm(searchRadius);
       const directionsService = new google.maps.DirectionsService();
@@ -1316,15 +1371,43 @@ function MapView({
         setExpandedStop(null);
         setChargeStats(null);
         setTripEta(null);
+        setRangeAdjust(null);
+
+        const path = result.routes[0].overview_path;
+
+        // ===== ปรับระยะวิ่ง EPA ตามอุณหภูมิเฉลี่ย + ความเร็วเฉลี่ย =====
+        const totalKmRaw = (route.distance?.value || 0) / 1000;
+        const totalHrRaw = (route.duration?.value || 0) / 3600;
+        const avgKmh = totalHrRaw > 0 ? totalKmRaw / totalHrRaw : 90;
+        // อุณหภูมิ: ดึงอัตโนมัติที่กลางเส้นทาง หรือใช้ค่าที่ผู้ใช้กำหนด
+        let tempC = manualTemp;
+        let tempSource: 'auto' | 'manual' | 'fallback' = 'manual';
+        if (tempMode === 'auto') {
+          const mid = path[Math.floor(path.length / 2)] || route.start_location;
+          const fetched = await fetchTemperature(mid.lat(), mid.lng());
+          if (fetched != null) { tempC = fetched; tempSource = 'auto'; }
+          else { tempC = 32; tempSource = 'fallback'; } // ดึงไม่ได้ → ใช้ค่าประมาณไทย
+        }
+        const sFactor = speedRangeFactor(avgKmh);
+        const tFactor = tempRangeFactor(tempC);
+        const factor = sFactor * tFactor;
+        const effEpaRange = epaRange * factor;
+        setRangeAdjust({
+          baseRange: Math.round(epaRange),
+          effRange: Math.round(effEpaRange),
+          reducePct: Math.round((1 - factor) * 100),
+          tempC: Math.round(tempC),
+          avgKmh: Math.round(avgKmh),
+          tempSource,
+        });
 
         // เลกแรก: จาก %แบตเริ่มต้น ลงมาถึงจุดเริ่มชาร์จ
         // เลกถัดไป: จาก %เป้าหมายชาร์จ ลงมาถึงจุดเริ่มชาร์จ
-        const firstLegRange = epaRange * Math.max(0, startSoc - minBatteryThreshold) / 100;
-        const nextLegRange = epaRange * Math.max(0, targetCharge - minBatteryThreshold) / 100;
+        const firstLegRange = effEpaRange * Math.max(0, startSoc - minBatteryThreshold) / 100;
+        const nextLegRange = effEpaRange * Math.max(0, targetCharge - minBatteryThreshold) / 100;
 
         const stops: any[] = [];
         const allFoundStations: any[] = [];
-        const path = result.routes[0].overview_path;
         // เส้นทางแบบละเอียด (จุดถี่จาก steps) สำหรับตัดสินฝั่งซ้าย/ขวาให้แม่นบนทางแบ่งเกาะกลาง
         const detailedPath: google.maps.LatLng[] = [];
         (result.routes[0].legs[0].steps || []).forEach((step: any) => {
@@ -1539,6 +1622,7 @@ function MapView({
     ];
     if (tripData?.vehicleName) lines.push(`🔋 รถ: ${tripData.vehicleName}`);
     if (routeInfo) lines.push(`🛣️ ระยะทาง: ${routeInfo.distance} · เวลาขับ ~${routeInfo.duration}`);
+    if (rangeAdjust) lines.push(`🌡️ ระยะวิ่งปรับแล้ว ~${rangeAdjust.effRange} กม. (EPA ${rangeAdjust.baseRange} · ${rangeAdjust.tempC}°C · ${rangeAdjust.avgKmh} กม./ชม.)`);
     lines.push(`⚡ จุดแวะชาร์จ: ${plannedStops.length} จุด`);
     if (chargeStats) {
       const netName = CHARGING_NETWORKS.find(n => n.id === chargeStats.networkId)?.name ?? '';
@@ -1872,6 +1956,28 @@ function MapView({
                     </div>
                   </div>
                   <p className="text-lg font-black text-primary tabular-nums shrink-0">{formatClock(tripEta.destTs)}</p>
+                </div>
+              )}
+
+              {rangeAdjust && (
+                <div className="flex items-center justify-between gap-3 bg-orange-500/5 border border-orange-500/20 rounded-2xl p-4">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="bg-orange-500/10 p-2 rounded-xl text-orange-500 shrink-0">
+                      <Thermometer className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] text-muted-foreground uppercase font-black">ระยะวิ่งที่ปรับแล้ว</p>
+                      <p className="text-[11px] font-bold text-muted-foreground">
+                        {rangeAdjust.tempC}°C{rangeAdjust.tempSource === 'fallback' ? ' (ประมาณ)' : ''} · เฉลี่ย {rangeAdjust.avgKmh} กม./ชม.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-lg font-black text-orange-600 tabular-nums leading-tight">{rangeAdjust.effRange} กม.</p>
+                    <p className="text-[10px] font-bold text-muted-foreground tabular-nums">
+                      EPA {rangeAdjust.baseRange}{rangeAdjust.reducePct !== 0 ? ` · ${rangeAdjust.reducePct > 0 ? '−' : '+'}${Math.abs(rangeAdjust.reducePct)}%` : ''}
+                    </p>
+                  </div>
                 </div>
               )}
 
