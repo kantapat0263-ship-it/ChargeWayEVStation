@@ -1790,6 +1790,20 @@ function MapView({
                 >
                   <Navigation className="w-3.5 h-3.5" /> นำทางผ่านสถานีนี้
                 </Button>
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedStation.name || `${selectedStation.geometry.location.lat()},${selectedStation.geometry.location.lng()}`)}${selectedStation.place_id ? `&query_place_id=${selectedStation.place_id}` : ''}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block"
+                >
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full mt-2 h-8 text-[10px] font-bold rounded-xl gap-1"
+                  >
+                    <MapIcon className="w-3.5 h-3.5" /> เปิดสถานีนี้ใน Google Maps
+                  </Button>
+                </a>
                 {(() => {
                   const net = matchStationNetwork(selectedStation.name);
                   if (!net?.appUrl) return null;
