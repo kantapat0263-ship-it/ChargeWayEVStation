@@ -77,6 +77,7 @@ import {
   Clock,
   Compass,
   Thermometer,
+  Smartphone,
 } from 'lucide-react';
 import {
   CHARGING_NETWORKS,
@@ -1789,6 +1790,22 @@ function MapView({
                 >
                   <Navigation className="w-3.5 h-3.5" /> นำทางผ่านสถานีนี้
                 </Button>
+                {(() => {
+                  const net = matchStationNetwork(selectedStation.name);
+                  if (!net?.appUrl) return null;
+                  return (
+                    <a href={net.appUrl} target="_blank" rel="noopener noreferrer" className="block">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full mt-2 h-8 text-[10px] font-bold rounded-xl gap-1"
+                        style={{ borderColor: net.color, color: net.color }}
+                      >
+                        <Smartphone className="w-3.5 h-3.5" /> เปิดแอป {net.short} (ดูสถานะ/จองเอง)
+                      </Button>
+                    </a>
+                  );
+                })()}
               </div>
             </InfoWindow>
           )}
