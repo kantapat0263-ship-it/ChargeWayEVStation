@@ -119,7 +119,8 @@ export interface ChargingNetwork {
   color: string;
   queries: string[]; // รายการคีย์เวิร์ดที่ใช้ค้นหาจริง
   brandMatch: string[]; // คำสำคัญที่ใช้กรองยืนยันแบรนด์
-  appUrl?: string; // ลิงก์เปิดแอป/หน้าดาวน์โหลดของเครือข่าย
+  appUrl?: string; // ลิงก์เปิดแอป/หน้าดาวน์โหลดของเครือข่าย (fallback ไป Store)
+  androidPackage?: string; // ชื่อแพ็กเกจแอป Android ไว้เปิดแอปตรง ๆ ถ้าติดตั้งแล้ว
 }
 
 export const CHARGING_NETWORKS: ChargingNetwork[] = [
@@ -130,7 +131,8 @@ export const CHARGING_NETWORKS: ChargingNetwork[] = [
     color: '#004A99',
     queries: ['PTT EV Station', 'PTT Charging Station', 'ปตท EV', 'PTT EV', 'EV Station Pluz'],
     brandMatch: ['ptt', 'ปตท', 'pluz'],
-    appUrl: 'https://play.google.com/store/search?q=EV%20Station%20PluZ&c=apps',
+    appUrl: 'https://play.google.com/store/apps/details?id=com.pttor.evstationpluz',
+    androidPackage: 'com.pttor.evstationpluz',
   },
   {
     id: 'pea',
@@ -139,7 +141,8 @@ export const CHARGING_NETWORKS: ChargingNetwork[] = [
     color: '#7B2CBF',
     queries: ['PEA VOLTA', 'PEA Volta', 'โวลต้า', 'VOLTA charging'],
     brandMatch: ['pea', 'volta', 'โวลต้า'],
-    appUrl: 'https://play.google.com/store/search?q=PEA%20VOLTA&c=apps',
+    appUrl: 'https://play.google.com/store/apps/details?id=com.pea.peavolta',
+    androidPackage: 'com.pea.peavolta',
   },
   {
     id: 'elexa',
@@ -148,7 +151,8 @@ export const CHARGING_NETWORKS: ChargingNetwork[] = [
     color: '#00BFA5',
     queries: ['ELEXA', 'EleXA', 'EleX by EGAT', 'EGAT EV'],
     brandMatch: ['elexa', 'egat', 'elex'],
-    appUrl: 'https://play.google.com/store/search?q=EleXA&c=apps',
+    appUrl: 'https://play.google.com/store/apps/details?id=egat.smd.ev',
+    androidPackage: 'egat.smd.ev',
   },
   {
     id: 'spark',
@@ -157,7 +161,8 @@ export const CHARGING_NETWORKS: ChargingNetwork[] = [
     color: '#E31937',
     queries: ['SPARK EV', 'Spark Charging'],
     brandMatch: ['spark'],
-    appUrl: 'https://play.google.com/store/search?q=SHARGE%20SPARK&c=apps',
+    appUrl: 'https://play.google.com/store/apps/details?id=hk.com.cstl.evcs.intl.spark',
+    androidPackage: 'hk.com.cstl.evcs.intl.spark',
   },
 ];
 

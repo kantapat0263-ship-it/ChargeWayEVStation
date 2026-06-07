@@ -1615,6 +1615,36 @@ function MapView({
     window.open(url, '_blank');
   };
 
+  // เปิดแอปของเครือข่ายปั๊มตรง ๆ ถ้าติดตั้งแล้ว (Android) ไม่งั้นไปหน้า Store
+  // หมายเหตุ: แอปเครือข่ายไม่มี deep link ระดับ "หน้าสถานี" จึงคัดลอกชื่อสถานีไว้ให้
+  // ผู้ใช้วางในช่องค้นหาของแอปเพื่อไปยังสถานีนั้นได้ทันที
+  const openNetworkApp = (net: { short: string; appUrl?: string; androidPackage?: string }, stationName?: string) => {
+    if (stationName) {
+      navigator.clipboard?.writeText(stationName).catch(() => {});
+    }
+    toast({
+      title: `กำลังเปิดแอป ${net.short}`,
+      description: stationName
+        ? `คัดลอกชื่อ “${stationName}” ไว้ให้แล้ว — วางในช่องค้นหาของแอปเพื่อไปหน้าสถานีนี้`
+        : 'เปิดแอปเครือข่ายเพื่อดูสถานะ/จองเอง',
+    });
+
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    const isAndroid = /Android/i.test(ua);
+
+    // Android: ใช้ intent:// เพื่อเปิดแอปถ้าติดตั้งแล้ว ไม่งั้น fallback ไป Play Store
+    if (isAndroid && net.androidPackage) {
+      const fallback = net.appUrl ?? `https://play.google.com/store/apps/details?id=${net.androidPackage}`;
+      window.location.href =
+        `intent://#Intent;package=${net.androidPackage};` +
+        `S.browser_fallback_url=${encodeURIComponent(fallback)};end`;
+      return;
+    }
+
+    // iOS / เดสก์ท็อป: เปิดหน้า Store ของแอป (เปิดแอปตรง ๆ ข้ามเว็บไม่รองรับ)
+    if (net.appUrl) window.open(net.appUrl, '_blank');
+  };
+
   // สร้างข้อความสรุปทริปสำหรับแชร์/คัดลอก
   const buildSummary = () => {
     const lines = [
@@ -1808,16 +1838,15 @@ function MapView({
                   const net = matchStationNetwork(selectedStation.name);
                   if (!net?.appUrl) return null;
                   return (
-                    <a href={net.appUrl} target="_blank" rel="noopener noreferrer" className="block">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-full mt-2 h-8 text-[10px] font-bold rounded-xl gap-1"
-                        style={{ borderColor: net.color, color: net.color }}
-                      >
-                        <Smartphone className="w-3.5 h-3.5" /> เปิดแอป {net.short} (ดูสถานะ/จองเอง)
-                      </Button>
-                    </a>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full mt-2 h-8 text-[10px] font-bold rounded-xl gap-1"
+                      style={{ borderColor: net.color, color: net.color }}
+                      onClick={() => openNetworkApp(net, selectedStation.name)}
+                    >
+                      <Smartphone className="w-3.5 h-3.5" /> เปิดแอป {net.short} หน้าสถานีนี้
+                    </Button>
                   );
                 })()}
               </div>
