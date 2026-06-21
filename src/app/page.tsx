@@ -1485,8 +1485,12 @@ function MapView({
 
         const finalUniqueMap = new window.Map();
         allFoundStations.forEach(res => {
-          // แสดงเฉพาะเครือข่ายที่รู้จัก (ตัดสถานีอื่น ๆ ออก)
-          if (res.place_id && matchStationNetwork(res.name)) {
+          // แสดงเฉพาะเครือข่ายที่ "ผู้ใช้เลือกไว้" เท่านั้น
+          // (Google nearbySearch คืนปั๊มเครือข่ายอื่นที่อยู่ใกล้ ๆ ปนมาด้วย จึงต้องกรองซ้ำที่นี่)
+          // ถ้าไม่ได้เลือกเครือข่ายใดเลย = แสดงทุกเครือข่ายที่รู้จัก
+          const net = matchStationNetwork(res.name);
+          const allowed = net && (selectedNetworks.length === 0 || selectedNetworks.includes(net.id));
+          if (res.place_id && allowed) {
             // ระบุว่าสถานีอยู่ฝั่งไหนของทิศทางเดินทาง (ซ้าย/ขวา/ก้ำกึ่ง) ด้วยเส้นละเอียด
             res.side = sideOfRoute(res.geometry.location, sidePath);
             finalUniqueMap.set(res.place_id, res);
