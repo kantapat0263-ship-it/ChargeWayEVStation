@@ -101,9 +101,17 @@ import { useGeoWatch } from '@/hooks/use-geo-watch';
 import { useWakeLock } from '@/hooks/use-wake-lock';
 import { cn } from '@/lib/utils';
 
-// ตั้งค่า NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ใน .env.local / Vercel (ดู README)
-// fallback ด้านล่างเป็น key ชั่วคราว — ควร rotate + จำกัดสิทธิ์ตาม HTTP referrer ใน Google Cloud
-const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PIl-0fyiz40tHHH8Hnk";
+// ตั้งค่า NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ใน .env.local / Vercel (ดู README + .env.example)
+// หมายเหตุ: key ของ Google Maps เป็น client-side โดยธรรมชาติ — ความปลอดภัยที่แท้จริง
+// มาจากการ "จำกัดสิทธิ์ key" ใน Google Cloud (HTTP referrer + จำกัด API ที่ใช้) ไม่ใช่การซ่อน key
+const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
+
+if (typeof window !== "undefined" && !GOOGLE_MAPS_API_KEY) {
+  // เตือนตอน dev ถ้าลืมตั้งค่า env — กันแผนที่ขึ้นว่างเปล่าแบบงง ๆ
+  console.warn(
+    "[ChargeWay] ไม่พบ NEXT_PUBLIC_GOOGLE_MAPS_API_KEY — ตั้งค่าใน .env.local หรือ Vercel ก่อนใช้งานแผนที่"
+  );
+}
 
 // จัดการธีมสว่าง/มืด เก็บค่าใน localStorage และสลับคลาส .dark บน <html>
 function useTheme(): [boolean, () => void] {
