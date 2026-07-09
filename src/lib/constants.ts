@@ -80,7 +80,9 @@ export const DEFAULT_PRICE_PER_KWH = 7.5;
 export const DEFAULT_TARGET_CHARGE = 80;
 
 // ===== Charging Tariffs (Peak / Off-peak) =====
-// ราคา DC โดยประมาณต่อเครือข่าย (อ้างอิงข้อมูลปี 2025 — อาจเปลี่ยนแปลง ควรตรวจสอบกับแอปของแต่ละค่าย)
+// ราคา DC โดยประมาณต่อเครือข่าย (อาจเปลี่ยนแปลง ควรตรวจสอบกับแอปของแต่ละค่าย)
+// ⚠️ ทุกครั้งที่อัปเดตตัวเลขราคา ให้อัปเดต TARIFF_REFERENCE ด้วย — ค่านี้แสดงบน UI
+export const TARIFF_REFERENCE = 'ปี 2025';
 export interface NetworkTariff {
   peak: number;    // บาท/kWh ช่วง Peak
   offPeak: number; // บาท/kWh ช่วง Off-peak

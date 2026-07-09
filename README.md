@@ -19,6 +19,16 @@ npm run dev
 | ตัวแปร | คำอธิบาย |
 |--------|----------|
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Google Maps JavaScript API key |
+| `NEXT_PUBLIC_SENTRY_DSN` | (ไม่บังคับ) DSN จาก [sentry.io](https://sentry.io) สำหรับ crash reporting — ไม่ตั้ง = ปิด |
+
+## คำสั่งที่ใช้บ่อย
+
+```bash
+npm run dev        # รันแบบ dev (port 9002)
+npm test           # unit tests (logic คำนวณระยะ/ชาร์จ/จุดแวะ/ราคา)
+npm run typecheck  # เช็ค TypeScript
+npm run build      # build production (typecheck เปิดอยู่ — error = build ไม่ผ่าน)
+```
 
 > 🚨 **ต้องทำทันที: rotate API key**
 > key เดิมเคยถูกฝังในโค้ดและยังอยู่ใน **ประวัติ git** — ถือว่าหลุดแล้ว

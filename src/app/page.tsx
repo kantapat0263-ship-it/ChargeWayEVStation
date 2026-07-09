@@ -92,7 +92,10 @@ import {
   type TariffMode,
   matchStationNetwork,
   UNKNOWN_NETWORK,
+  TARIFF_REFERENCE,
 } from '@/lib/constants';
+import { planStopIndices } from '@/lib/plan-stops';
+import * as Sentry from '@sentry/nextjs';
 import { type SavedTrip, loadTrips, saveTrip, deleteTrip } from '@/lib/trips';
 import { type Favorites, type FavKind, loadRecents, addRecent, loadFavorites, setFavorite, clearFavorite } from '@/lib/places';
 import { speedRangeFactor, tempRangeFactor, fetchTemperature, chargeMinutes } from '@/lib/range-model';
@@ -223,6 +226,22 @@ function pickBestStation(candidates: any[]): any | null {
 }
 
 
+// แปลงผลลัพธ์จาก Places API (New) ให้อยู่รูปเดียวกับ PlaceResult เดิม
+// เพื่อให้โค้ดส่วนแสดงผล/ให้คะแนนสถานีใช้ร่วมกันได้ทั้งสอง API
+function placeToLegacy(p: any): any {
+  return {
+    place_id: p.id,
+    name: p.displayName,
+    geometry: { location: p.location },
+    rating: p.rating ?? undefined,
+    user_ratings_total: p.userRatingCount ?? undefined,
+    vicinity: p.formattedAddress ?? '',
+    photos: p.photos?.length
+      ? [{ getUrl: (opts: any) => p.photos[0].getURI?.(opts) }]
+      : undefined,
+  };
+}
+
 function StationRating({ rating, total }: { rating?: number; total?: number }) {
   if (!rating) return null;
   return (
@@ -237,6 +256,7 @@ function StationRating({ rating, total }: { rating?: number; total?: number }) {
 export default function ChargeWayApp() {
   const [tripData, setTripData] = useState<any>(null);
   const [isPickingOnMap, setIsPickingOnMap] = useState<'origin' | 'destination' | null>(null);
+  const [isPlanning, setIsPlanning] = useState(false); // กันกดวางแผนซ้อนระหว่างคำนวณ
   const [isDark, toggleTheme] = useTheme();
 
   if (!GOOGLE_MAPS_API_KEY) {
@@ -282,10 +302,11 @@ export default function ChargeWayApp() {
 
           <ScrollArea className="flex-1 h-auto lg:h-full">
             <main className="p-6 space-y-8">
-              <TripForm 
-                onPlanTrip={setTripData} 
+              <TripForm
+                onPlanTrip={setTripData}
                 isPickingOnMap={isPickingOnMap}
                 setIsPickingOnMap={setIsPickingOnMap}
+                isPlanning={isPlanning}
               />
             </main>
           </ScrollArea>
@@ -300,10 +321,11 @@ export default function ChargeWayApp() {
 
         {/* Right Map Panel & Summary */}
         <div className="flex-1 relative flex flex-col h-auto lg:h-full bg-slate-50 dark:bg-slate-950 overflow-y-auto lg:overflow-hidden">
-          <MapView 
-            tripData={tripData} 
-            isPickingOnMap={isPickingOnMap} 
+          <MapView
+            tripData={tripData}
+            isPickingOnMap={isPickingOnMap}
             setIsPickingOnMap={setIsPickingOnMap}
+            onPlanningChange={setIsPlanning}
           />
           {isPickingOnMap && (
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 pointer-events-none">
@@ -321,14 +343,16 @@ export default function ChargeWayApp() {
   );
 }
 
-function TripForm({ 
-  onPlanTrip, 
-  isPickingOnMap, 
-  setIsPickingOnMap 
-}: { 
+function TripForm({
+  onPlanTrip,
+  isPickingOnMap,
+  setIsPickingOnMap,
+  isPlanning,
+}: {
   onPlanTrip: (data: any) => void;
   isPickingOnMap: 'origin' | 'destination' | null;
   setIsPickingOnMap: (val: 'origin' | 'destination' | null) => void;
+  isPlanning: boolean;
 }) {
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
@@ -1056,6 +1080,10 @@ function TripForm({
               {getTariffRate(pricingNetworkId, tariffMode)} ฿/kWh
             </span>
           </div>
+
+          <p className="text-[10px] font-medium text-muted-foreground/80 pt-0.5">
+            ราคาอ้างอิง{TARIFF_REFERENCE} — ตรวจสอบราคาจริงในแอปของเครือข่ายก่อนชาร์จ
+          </p>
         </div>
       </section>
 
@@ -1082,25 +1110,30 @@ function TripForm({
         </div>
       </section>
 
-      <Button 
+      <Button
         onClick={handlePlanTrip}
+        disabled={isPlanning}
         className="w-full h-15 rounded-[1.25rem] text-base font-black transition-all bg-primary hover:bg-primary/90 text-white flex gap-3 items-center group shadow-lg"
       >
-        <LocateFixed className="w-5.5 h-5.5 transition-transform group-hover:rotate-12" /> 
-        คำนวณเส้นทางและจุดชาร์จ
+        {isPlanning
+          ? <Loader2 className="w-5.5 h-5.5 animate-spin" />
+          : <LocateFixed className="w-5.5 h-5.5 transition-transform group-hover:rotate-12" />}
+        {isPlanning ? 'กำลังคำนวณ…' : 'คำนวณเส้นทางและจุดชาร์จ'}
       </Button>
     </div>
   );
 }
 
-function MapView({ 
-  tripData, 
-  isPickingOnMap, 
-  setIsPickingOnMap 
-}: { 
+function MapView({
+  tripData,
+  isPickingOnMap,
+  setIsPickingOnMap,
+  onPlanningChange,
+}: {
   tripData: any;
   isPickingOnMap: 'origin' | 'destination' | null;
   setIsPickingOnMap: (val: 'origin' | 'destination' | null) => void;
+  onPlanningChange?: (planning: boolean) => void;
 }) {
   const map = useMap();
   const routesLib = useMapsLibrary('routes');
@@ -1117,6 +1150,10 @@ function MapView({
   const [expandedStop, setExpandedStop] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  // เลขลำดับรอบคำนวณ — กันกดวางแผนซ้อนแล้วผลรอบเก่า (ที่ resolve ช้ากว่า) มาทับรอบใหม่
+  const planSeqRef = useRef(0);
+  // tripData ที่ plannedStops ชุดปัจจุบันถูกคำนวณมา — เฟสสองใช้เช็คว่าจุดแวะกับทริปตรงกัน
+  const planForTripRef = useRef<any>(null);
   const [searchRadiusKm, setSearchRadiusKm] = useState(20);
   const [chargeStats, setChargeStats] = useState<{
     perStopKwh: number;
@@ -1126,6 +1163,8 @@ function MapView({
     rateLabel: string;
     networkId: string;
     tariffMode: TariffMode;
+    // รายจุด (index ตรงกับ plannedStops) — มีเมื่อคำนวณผ่านเส้นทางจริงแบบ waypoint แล้ว
+    stops?: ({ kwh: number; min: number } | null)[];
   } | null>(null);
   const [tripEta, setTripEta] = useState<{ destTs: number; totalTripMin: number } | null>(null);
   const [rangeAdjust, setRangeAdjust] = useState<{
@@ -1227,6 +1266,114 @@ function MapView({
     ...(destinationLatLng ? [destinationLatLng] : []),
   ];
 
+  // ===== เฟสสอง: เส้นทางจริงผ่านปั๊มที่เลือก (waypoints) =====
+  // เส้นทางเฟสแรกเป็นเส้นตรงต้นทาง→ปลายทาง ไม่รวมระยะอ้อมเข้าปั๊ม — พอรู้ปั๊มจริงแล้ว
+  // ขอเส้นทางใหม่ผ่านทุกปั๊ม เพื่อได้ระยะ/เวลา/ETA ต่อจุดที่แม่น และคำนวณปริมาณชาร์จ
+  // รายจุดตามที่ต้องใช้จริง (จุดสุดท้ายชาร์จแค่พอถึงปลายทาง + แบตสำรอง ไม่ชาร์จเต็มเป้าเสมอ)
+  const resolvedKey = resolvedStops.map((s: any) => s?.place_id ?? '-').join(',');
+  useEffect(() => {
+    if (!tripData || !routesLib || !directionsRenderer || plannedStops.length === 0) return;
+    if (planForTripRef.current !== tripData) return; // จุดแวะยังเป็นของทริปเก่า — รอเฟสแรกจบก่อน
+    const stations = resolvedStops.filter(Boolean);
+    if (stations.length === 0) return;
+
+    let stale = false;
+    const refineRoute = async () => {
+      try {
+        const directionsService = new google.maps.DirectionsService();
+        const result = await directionsService.route({
+          origin: tripData.origin,
+          destination: tripData.destination,
+          waypoints: stations.map((s: any) => ({ location: s.geometry.location, stopover: true })),
+          optimizeWaypoints: false,
+          travelMode: google.maps.TravelMode.DRIVING,
+        });
+        if (stale) return;
+
+        directionsRenderer.setDirections(result);
+        const legs = result.routes[0].legs;
+        const legKm = legs.map(l => (l.distance?.value || 0) / 1000);
+        const legMin = legs.map(l => (l.duration?.value || 0) / 60);
+        const totalKm = legKm.reduce((a, b) => a + b, 0);
+        const totalDriveMin = legMin.reduce((a, b) => a + b, 0);
+
+        const effRange = rangeAdjust?.effRange || tripData.epaRange || 1;
+        const batteryKwh = tripData.batteryKwh ?? 60;
+        const chargingKw = tripData.chargingKw ?? 60;
+        const threshold = tripData.minBatteryThreshold ?? 15;
+        const target = tripData.targetCharge ?? DEFAULT_TARGET_CHARGE;
+
+        // จำลอง %แบตผ่านทีละเลก แล้วชาร์จที่แต่ละปั๊ม "เท่าที่ต้องใช้" ถึงเป้าถัดไป
+        const stopIdxOfStation = resolvedStops
+          .map((s: any, i: number) => (s ? i : -1))
+          .filter((i: number) => i >= 0);
+        const now = Date.now();
+        let soc = tripData.startSoc ?? 100;
+        let clockMin = 0;
+        let totalCost = 0;
+        let totalChargeMin = 0;
+        const rates: number[] = [];
+        const perStop: ({ kwh: number; min: number } | null)[] = plannedStops.map(() => null);
+        const etaByStop: (number | null)[] = plannedStops.map(() => null);
+
+        for (let w = 0; w < stations.length; w++) {
+          soc -= (legKm[w] / effRange) * 100;
+          clockMin += legMin[w];
+          const arrival = new Date(now + clockMin * 60000);
+          const fromSoc = Math.max(0, soc);
+          const nextKm = legKm[w + 1] ?? 0;
+          // ชาร์จให้พอวิ่งเลกถัดไป + เหลือถึงจุดเริ่มชาร์จ แต่ไม่เกินเป้าหมายที่ตั้งไว้
+          const needForNext = (nextKm / effRange) * 100 + threshold;
+          const toSoc = Math.min(target, Math.max(needForNext, fromSoc));
+          const kwh = Math.max(0, batteryKwh * (toSoc - fromSoc) / 100);
+          const min = chargeMinutes(batteryKwh, chargingKw, fromSoc, toSoc);
+          const rate = getTariffRate(tripData.pricingNetworkId ?? 'ptt', tripData.tariffMode ?? 'auto', arrival);
+
+          rates.push(rate);
+          totalCost += kwh * rate;
+          totalChargeMin += min;
+          perStop[stopIdxOfStation[w]] = { kwh: Math.round(kwh * 10) / 10, min: Math.round(min) };
+          etaByStop[stopIdxOfStation[w]] = arrival.getTime();
+          clockMin += min;
+          soc = toSoc;
+        }
+        clockMin += legMin[stations.length] ?? 0; // เลกสุดท้ายเข้าปลายทาง
+
+        setRouteInfo({
+          distance: `${Math.round(totalKm)} กม.`,
+          duration: formatMinutes(Math.round(totalDriveMin)),
+          distanceKm: totalKm,
+        });
+        setTripEta({ destTs: now + clockMin * 60000, totalTripMin: Math.round(clockMin) });
+        setPlannedStops((prev: any[]) =>
+          prev.map((s, i) => (etaByStop[i] != null ? { ...s, etaTs: etaByStop[i] } : s))
+        );
+
+        const kwhs = perStop.filter(Boolean) as { kwh: number; min: number }[];
+        const minRate = Math.min(...rates);
+        const maxRate = Math.max(...rates);
+        setChargeStats({
+          perStopKwh: Math.round((kwhs.reduce((a, b) => a + b.kwh, 0) / kwhs.length) * 10) / 10,
+          perStopMin: Math.round(kwhs.reduce((a, b) => a + b.min, 0) / kwhs.length),
+          totalMin: Math.round(totalChargeMin),
+          totalCost: Math.round(totalCost),
+          rateLabel: minRate === maxRate ? `${minRate}` : `${minRate}–${maxRate}`,
+          networkId: tripData.pricingNetworkId ?? 'ptt',
+          tariffMode: tripData.tariffMode ?? 'auto',
+          stops: perStop,
+        });
+      } catch (err) {
+        // ขอเส้นทางผ่านปั๊มไม่สำเร็จ — คงค่าประมาณจากเฟสแรกไว้ (ยังใช้งานได้)
+        console.error('Waypoint route refine failed', err);
+        Sentry.captureException(err);
+      }
+    };
+
+    refineRoute();
+    return () => { stale = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedKey, plannedStops.length, tripData, routesLib, directionsRenderer, rangeAdjust]);
+
   const startDriving = () => {
     setNextStopIndex(0);
     setFollowCamera(true);
@@ -1259,10 +1406,36 @@ function MapView({
     : stations.filter((s: any) => !s.side || s.side === DRIVER_SIDE || s.side === 'near');
 
   // ดึงรายละเอียดเพิ่มเติมของสถานีที่เลือก (เบอร์โทร/เว็บไซต์/เวลาเปิด)
-  const selectStation = useCallback((station: any) => {
+  // ลอง Places API (New) ก่อน แล้ว fallback ไป PlacesService.getDetails แบบเก่า
+  const selectStation = useCallback(async (station: any) => {
     setSelectedStation(station);
     map?.panTo(station.geometry.location);
     if (!placesLib || !map || station.formatted_phone_number || station.website) return;
+
+    const PlaceCtor = (google.maps.places as any).Place;
+    if (PlaceCtor) {
+      try {
+        const place = new PlaceCtor({ id: station.place_id });
+        await place.fetchFields({
+          fields: ['nationalPhoneNumber', 'websiteURI', 'rating', 'userRatingCount'],
+        });
+        setSelectedStation((prev: any) =>
+          prev && prev.place_id === station.place_id
+            ? {
+                ...prev,
+                formatted_phone_number: place.nationalPhoneNumber ?? prev.formatted_phone_number,
+                website: place.websiteURI ?? prev.website,
+                rating: place.rating ?? prev.rating,
+                user_ratings_total: place.userRatingCount ?? prev.user_ratings_total,
+              }
+            : prev
+        );
+        return;
+      } catch {
+        // ตกไปใช้ legacy ด้านล่าง
+      }
+    }
+
     const service = new google.maps.places.PlacesService(map);
     service.getDetails(
       { placeId: station.place_id, fields: ['formatted_phone_number', 'website', 'opening_hours', 'rating', 'user_ratings_total', 'url'] },
@@ -1315,12 +1488,29 @@ function MapView({
     });
   }, [isPickingOnMap, geocodingLib, setIsPickingOnMap]);
 
-  // ค้นสถานีรอบจุดแวะแบบกว้าง 2 ครั้ง (type + คีย์เวิร์ดรวม) แล้วค่อยกรองแบรนด์ฝั่ง client
-  // ด้วย matchStationNetwork — เดิมยิงคีย์เวิร์ดแยกต่อเครือข่าย ~15 ครั้ง/จุดแวะ ทำให้ค่า
-  // Places API ต่อการวางแผน 1 ครั้งสูงมากและชนโควตาฟรีเร็ว
+  // ค้นสถานีรอบจุดแวะแบบกว้าง แล้วค่อยกรองแบรนด์ฝั่ง client ด้วย matchStationNetwork
+  // — เดิมยิงคีย์เวิร์ดแยกต่อเครือข่าย ~15 ครั้ง/จุดแวะ ทำให้ค่า Places API สูงมาก
+  // ลองใช้ Places API (New) ก่อน (1 call) ถ้าโปรเจกต์ยังไม่เปิดใช้จะ fallback ไป API เก่า (2 calls)
   const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng, radiusKm: number = 20) => {
     if (!placesLib || !map) return [];
 
+    // ----- Places API (New): Place.searchNearby -----
+    const PlaceCtor = (google.maps.places as any).Place;
+    if (PlaceCtor?.searchNearby) {
+      try {
+        const { places } = await PlaceCtor.searchNearby({
+          locationRestriction: { center: location, radius: radiusKm * 1000 },
+          includedTypes: ['electric_vehicle_charging_station'],
+          maxResultCount: 20,
+          fields: ['id', 'displayName', 'location', 'rating', 'userRatingCount', 'formattedAddress', 'photos'],
+        });
+        return (places ?? []).map(placeToLegacy);
+      } catch {
+        // โปรเจกต์ยังไม่เปิด Places API (New) หรือ SDK รุ่นเก่า — ใช้เส้นทาง legacy ต่อ
+      }
+    }
+
+    // ----- Legacy fallback: PlacesService.nearbySearch -----
     const service = new google.maps.places.PlacesService(map);
     const requests: google.maps.places.PlaceSearchRequest[] = [
       { location, radius: radiusKm * 1000, type: 'car_charging_station' },
@@ -1352,9 +1542,11 @@ function MapView({
 
   useEffect(() => {
     if (!tripData || !routesLib || !directionsRenderer || !map) return;
-    
+
     const calculateRoute = async () => {
+      const seq = ++planSeqRef.current;
       setIsLoading(true);
+      onPlanningChange?.(true);
       const {
         origin, destination, epaRange, minBatteryThreshold, selectedNetworks,
         batteryKwh = 60, chargingKw = 60, targetCharge = 80,
@@ -1370,6 +1562,7 @@ function MapView({
           destination,
           travelMode: google.maps.TravelMode.DRIVING,
         });
+        if (seq !== planSeqRef.current) return; // มีรอบใหม่กว่าแล้ว — ทิ้งผลรอบนี้
 
         directionsRenderer.setDirections(result);
         const route = result.routes[0].legs[0];
@@ -1402,6 +1595,7 @@ function MapView({
         if (tempMode === 'auto') {
           const mid = path[Math.floor(path.length / 2)] || route.start_location;
           const fetched = await fetchTemperature(mid.lat(), mid.lng());
+          if (seq !== planSeqRef.current) return;
           if (fetched != null) { tempC = fetched; tempSource = 'auto'; }
           else { tempC = 32; tempSource = 'fallback'; } // ดึงไม่ได้ → ใช้ค่าประมาณไทย
         }
@@ -1438,31 +1632,26 @@ function MapView({
           return;
         }
 
-        const stops: any[] = [];
-        const allFoundStations: any[] = [];
         // เส้นทางแบบละเอียด (จุดถี่จาก steps) สำหรับตัดสินฝั่งซ้าย/ขวาให้แม่นบนทางแบ่งเกาะกลาง
         const detailedPath: google.maps.LatLng[] = [];
         (result.routes[0].legs[0].steps || []).forEach((step: any) => {
           if (step.path && step.path.length) detailedPath.push(...step.path);
         });
         const sidePath = detailedPath.length > 1 ? detailedPath : path;
-        let currentSegmentDist = 0;
-        let cumulativeDist = 0;
 
+        // วางจุดแวะด้วยลอจิก pure (มี unit test) แล้วค้นสถานีทุกจุดพร้อมกัน
+        const segmentKms: number[] = [];
         for (let i = 0; i < path.length - 1; i++) {
-          const d = google.maps.geometry.spherical.computeDistanceBetween(path[i], path[i+1]) / 1000;
-          currentSegmentDist += d;
-          cumulativeDist += d;
-
-          const legLimit = stops.length === 0 ? firstLegRange : nextLegRange;
-          if (legLimit > 0 && currentSegmentDist >= legLimit) {
-            const stopLoc = path[i+1];
-            stops.push({ location: stopLoc, atKm: Math.round(cumulativeDist) });
-            const found = await searchStationsAtLocation(stopLoc, searchRadius);
-            allFoundStations.push(...found);
-            currentSegmentDist = 0;
-          }
+          segmentKms.push(google.maps.geometry.spherical.computeDistanceBetween(path[i], path[i + 1]) / 1000);
         }
+        const stops: any[] = planStopIndices(segmentKms, firstLegRange, nextLegRange)
+          .map(p => ({ location: path[p.index], atKm: p.atKm }));
+
+        const foundLists = await Promise.all(
+          stops.map((s: any) => searchStationsAtLocation(s.location, searchRadius))
+        );
+        if (seq !== planSeqRef.current) return;
+        const allFoundStations: any[] = foundLists.flat();
 
         // คำนวณเวลาชาร์จ + ค่าไฟต่อจุด + เวลาถึง (ETA) ตามเวลาออกเดินทาง = ตอนนี้
         const totalKm = (route.distance?.value || 0) / 1000;
@@ -1533,6 +1722,7 @@ function MapView({
         stops.forEach((s: any) => { s.candidates.sort((a: any, b: any) => stationScore(b) - stationScore(a)); });
 
         setStations(knownStations);
+        planForTripRef.current = tripData;
         setPlannedStops(stops);
         setSelectedStops(stops.map(() => null)); // เริ่มต้นทุกจุด = อัตโนมัติ
         
@@ -1546,13 +1736,17 @@ function MapView({
 
       } catch (err) {
         console.error("Route planning failed", err);
+        Sentry.captureException(err); // no-op ถ้าไม่ได้ตั้ง NEXT_PUBLIC_SENTRY_DSN
         toast({
           variant: 'destructive',
           title: 'คำนวณเส้นทางไม่สำเร็จ',
           description: 'ไม่พบเส้นทางจากจุดเริ่มต้นไปปลายทาง — ตรวจสอบชื่อสถานที่หรือการเชื่อมต่อ แล้วลองใหม่อีกครั้ง',
         });
       } finally {
-        setIsLoading(false);
+        if (seq === planSeqRef.current) {
+          setIsLoading(false);
+          onPlanningChange?.(false);
+        }
       }
     };
 
@@ -1610,7 +1804,10 @@ function MapView({
       setNearAlert(meters <= 5000 ? { stopNo: nextStopIndex + 1, km: Math.max(0.1, meters / 1000) } : null);
     }
 
-    if (meters <= 400) {
+    // นับว่า "ถึง" เมื่อใกล้มาก (150 ม.) หรือใกล้พอและชะลอแล้ว (400 ม. + ต่ำกว่า 40 กม./ชม.)
+    // — กันเคสวิ่งผ่านปั๊มบนถนนใหญ่ด้วยความเร็วเต็มแล้วระบบเข้าใจว่าแวะแล้ว
+    const currentSpeed = geo.speed ?? 0;
+    if (meters <= 150 || (meters <= 400 && currentSpeed < 40)) {
       if (isChargingStop) {
         announce(988, `ถึงจุดชาร์จที่ ${nextStopIndex + 1} แล้ว พร้อมชาร์จได้เลย`);
         toast({ title: `ถึงจุดแวะที่ ${nextStopIndex + 1} แล้ว`, description: 'พร้อมชาร์จได้เลย' });
@@ -2075,7 +2272,16 @@ function MapView({
                           </div>
                         </div>
                         <p className="col-span-2 text-[10px] font-medium text-muted-foreground text-center">
-                          ต่อจุด ~{chargeStats.perStopKwh} kWh · {formatMinutes(chargeStats.perStopMin)} ·{" "}
+                          {(() => {
+                            // ถ้ามีตัวเลขรายจุด (คำนวณผ่านเส้นทางจริงแล้ว) โชว์เป็นช่วง min–max
+                            const per = (chargeStats.stops ?? []).filter(Boolean) as { kwh: number; min: number }[];
+                            if (per.length > 1) {
+                              const kMin = Math.min(...per.map(p => p.kwh)), kMax = Math.max(...per.map(p => p.kwh));
+                              const mMin = Math.min(...per.map(p => p.min)), mMax = Math.max(...per.map(p => p.min));
+                              return `ต่อจุด ~${kMin === kMax ? kMin : `${kMin}–${kMax}`} kWh · ${mMin === mMax ? formatMinutes(mMin) : `${mMin}–${mMax} นาที`} · `;
+                            }
+                            return `ต่อจุด ~${chargeStats.perStopKwh} kWh · ${formatMinutes(chargeStats.perStopMin)} · `;
+                          })()}
                           {CHARGING_NETWORKS.find(n => n.id === chargeStats.networkId)?.name ?? ''}{" "}
                           {chargeStats.rateLabel} ฿/kWh
                           {chargeStats.tariffMode === 'auto' ? ' (อัตโนมัติ)' : chargeStats.tariffMode === 'peak' ? ' (Peak)' : ' (Off-peak)'}
@@ -2123,7 +2329,10 @@ function MapView({
                               <div className="min-w-0 flex-1">
                                 <p className="text-[11px] font-black text-foreground">
                                   จุดที่ {i + 1}
-                                  <span className="text-[9px] font-bold text-muted-foreground"> · {stop.atKm} กม.{stop.etaTs ? ` · ${formatClock(stop.etaTs)}` : ''}</span>
+                                  <span className="text-[9px] font-bold text-muted-foreground">
+                                    {' '}· {stop.atKm} กม.{stop.etaTs ? ` · ${formatClock(stop.etaTs)}` : ''}
+                                    {chargeStats?.stops?.[i] ? ` · ชาร์จ ~${formatMinutes(chargeStats.stops[i]!.min)}` : ''}
+                                  </span>
                                 </p>
                                 {chosen ? (
                                   <div className="flex items-center gap-1 mt-0.5">
