@@ -3,7 +3,8 @@ import type {NextConfig} from 'next';
 const nextConfig: NextConfig = {
   /* config options here */
   typescript: {
-    ignoreBuildErrors: true,
+    // เปิด typecheck ตอน build — อย่ากลับไปปิดอีก บั๊กจะเล็ดรอดขึ้น production
+    ignoreBuildErrors: false,
   },
   eslint: {
     ignoreDuringBuilds: true,

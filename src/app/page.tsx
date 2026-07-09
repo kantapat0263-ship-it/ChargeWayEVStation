@@ -81,7 +81,6 @@ import {
 } from 'lucide-react';
 import {
   CHARGING_NETWORKS,
-  DEFAULT_SEARCH_KEYWORDS,
   VEHICLE_MODELS,
   DEFAULT_TARGET_CHARGE,
   RANGE_STANDARDS,
@@ -102,8 +101,8 @@ import { useWakeLock } from '@/hooks/use-wake-lock';
 import { cn } from '@/lib/utils';
 
 // ตั้งค่า NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ใน .env.local / Vercel (ดู README)
-// fallback ด้านล่างเป็น key ชั่วคราว — ควร rotate + จำกัดสิทธิ์ตาม HTTP referrer ใน Google Cloud
-const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "AIzaSyBkAJkrsoawc920PIl-0fyiz40tHHH8Hnk";
+// ห้ามฝัง key ในโค้ด — key เดิมที่เคยอยู่ตรงนี้หลุดใน git history แล้ว ต้อง rotate ใน Google Cloud Console
+const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
 // จัดการธีมสว่าง/มืด เก็บค่าใน localStorage และสลับคลาส .dark บน <html>
 function useTheme(): [boolean, () => void] {
@@ -240,6 +239,22 @@ export default function ChargeWayApp() {
   const [isPickingOnMap, setIsPickingOnMap] = useState<'origin' | 'destination' | null>(null);
   const [isDark, toggleTheme] = useTheme();
 
+  if (!GOOGLE_MAPS_API_KEY) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-6">
+        <div className="max-w-md text-center space-y-3">
+          <AlertCircle className="w-10 h-10 text-amber-500 mx-auto" />
+          <h1 className="text-lg font-black text-foreground">ยังไม่ได้ตั้งค่า Google Maps API key</h1>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            ตั้งค่า <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</code>{' '}
+            ใน <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">.env.local</code> (local)
+            หรือ Environment Variables ของโฮสต์ แล้ว build ใหม่ — ดูวิธีใน README
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <APIProvider apiKey={GOOGLE_MAPS_API_KEY} libraries={['places', 'geocoding', 'routes', 'geometry']}>
       <div className="flex flex-col lg:flex-row min-h-screen lg:h-screen w-full bg-background overflow-x-hidden font-body selection:bg-primary/20">
@@ -276,7 +291,10 @@ export default function ChargeWayApp() {
           </ScrollArea>
 
           <footer className="p-4 border-t border-border/50 bg-muted/20 text-center hidden lg:block">
-            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-widest">Powered by Google Places API • TH</p>
+            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-widest">
+              Powered by Google Places API • TH ·{' '}
+              <a href="/privacy" className="underline hover:text-primary">นโยบายความเป็นส่วนตัว</a>
+            </p>
           </footer>
         </div>
 
@@ -874,10 +892,11 @@ function TripForm({
             </Label>
             <span className="text-sm font-black text-secondary bg-secondary/10 px-3 py-1 rounded-xl tabular-nums">{minBatteryThreshold}%</span>
           </div>
-          <Slider 
-            value={[minBatteryThreshold]} 
-            onValueChange={v => setMinBatteryThreshold(v[0])} 
-            max={50} 
+          <Slider
+            value={[minBatteryThreshold]}
+            // ดันแบตเริ่มต้นตามขึ้นไปด้วย กันกรณี "จุดเริ่มชาร์จ" สูงกว่าแบตที่มี (จะคำนวณจุดแวะไม่ได้)
+            onValueChange={v => { setMinBatteryThreshold(v[0]); setStartSoc(s => Math.max(s, Math.min(100, v[0] + 5))); }}
+            max={50}
             min={5}
             step={1}
             className="py-1 cursor-pointer"
@@ -1196,9 +1215,15 @@ function MapView({
     setTimeout(() => speak(text), 220);
   }, [beep, speak]);
 
-  // รายการเป้าหมายตามลำดับ: จุดแวะชาร์จทั้งหมด + ปลายทางเป็นเป้าสุดท้าย
+  // ปั๊มที่จะใช้จริงของแต่ละจุด: ที่เลือกเอง หรือเลือกอัตโนมัติให้
+  const resolvedStops: (any | null)[] = plannedStops.map((stop: any, i: number) =>
+    selectedStops[i] ?? pickBestStation(stop.candidates)
+  );
+
+  // รายการเป้าหมายตามลำดับ: ตำแหน่งปั๊มจริงของแต่ละจุด (ปั๊มอาจห่างจากแนวเส้นทางได้หลาย กม.
+  // ถ้าใช้จุดบนเส้นทางจะเตือน "ถึงจุดชาร์จ" กลางถนน) + ปลายทางเป็นเป้าสุดท้าย
   const driveTargets: google.maps.LatLng[] = [
-    ...plannedStops.map((s: any) => s.location),
+    ...plannedStops.map((s: any, i: number) => resolvedStops[i]?.geometry?.location ?? s.location),
     ...(destinationLatLng ? [destinationLatLng] : []),
   ];
 
@@ -1290,30 +1315,21 @@ function MapView({
     });
   }, [isPickingOnMap, geocodingLib, setIsPickingOnMap]);
 
-  const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng, networks: string[], radiusKm: number = 20) => {
+  // ค้นสถานีรอบจุดแวะแบบกว้าง 2 ครั้ง (type + คีย์เวิร์ดรวม) แล้วค่อยกรองแบรนด์ฝั่ง client
+  // ด้วย matchStationNetwork — เดิมยิงคีย์เวิร์ดแยกต่อเครือข่าย ~15 ครั้ง/จุดแวะ ทำให้ค่า
+  // Places API ต่อการวางแผน 1 ครั้งสูงมากและชนโควตาฟรีเร็ว
+  const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng, radiusKm: number = 20) => {
     if (!placesLib || !map) return [];
 
     const service = new google.maps.places.PlacesService(map);
-    const searchKeywords: string[] = [];
+    const requests: google.maps.places.PlaceSearchRequest[] = [
+      { location, radius: radiusKm * 1000, type: 'car_charging_station' },
+      { location, radius: radiusKm * 1000, keyword: 'สถานีชาร์จ EV charging station' },
+    ];
 
-    if (networks.length > 0) {
-      networks.forEach(netId => {
-        const net = CHARGING_NETWORKS.find(n => n.id === netId);
-        if (net) searchKeywords.push(...net.queries);
-      });
-    } else {
-      searchKeywords.push(...DEFAULT_SEARCH_KEYWORDS);
-    }
-
-    const allResults: any[] = [];
-    const searchPromises = searchKeywords.map(keyword => {
+    const searchPromises = requests.map(request => {
       return new Promise<any[]>((resolve) => {
-        service.nearbySearch({
-          location,
-          radius: radiusKm * 1000,
-          keyword,
-          type: 'car_charging_station'
-        }, (results, status) => {
+        service.nearbySearch(request, (results, status) => {
           if (status === google.maps.places.PlacesServiceStatus.OK && results) {
             resolve(results);
           } else {
@@ -1324,7 +1340,7 @@ function MapView({
     });
 
     const resultsArray = await Promise.all(searchPromises);
-    resultsArray.forEach(res => allResults.push(...res));
+    const allResults = resultsArray.flat();
 
     const uniqueMap = new window.Map();
     allResults.forEach(res => {
@@ -1407,6 +1423,21 @@ function MapView({
         const firstLegRange = effEpaRange * Math.max(0, startSoc - minBatteryThreshold) / 100;
         const nextLegRange = effEpaRange * Math.max(0, targetCharge - minBatteryThreshold) / 100;
 
+        // การตั้งค่าที่ขัดกันทำให้วางจุดแวะไม่ได้ — ถ้าปล่อยผ่านจะกลายเป็นบอกผู้ใช้ว่า
+        // "เดินทางได้รวดเดียว" ทั้งที่แบตไม่พอ ต้องหยุด เคลียร์การ์ดสรุป และแจ้งให้แก้ค่าก่อน
+        if (firstLegRange <= 0 || (totalKmRaw > firstLegRange && nextLegRange <= 0)) {
+          setRouteInfo(null);
+          setRangeAdjust(null);
+          toast({
+            variant: 'destructive',
+            title: 'ตั้งค่าแบตเตอรี่ขัดกัน',
+            description: firstLegRange <= 0
+              ? 'แบตตอนเริ่มเดินทางต้องมากกว่า "จุดเริ่มชาร์จ" — ปรับค่าแล้วลองใหม่'
+              : 'เป้าหมายชาร์จต้องมากกว่า "จุดเริ่มชาร์จ" — ปรับค่าแล้วลองใหม่',
+          });
+          return;
+        }
+
         const stops: any[] = [];
         const allFoundStations: any[] = [];
         // เส้นทางแบบละเอียด (จุดถี่จาก steps) สำหรับตัดสินฝั่งซ้าย/ขวาให้แม่นบนทางแบ่งเกาะกลาง
@@ -1427,7 +1458,7 @@ function MapView({
           if (legLimit > 0 && currentSegmentDist >= legLimit) {
             const stopLoc = path[i+1];
             stops.push({ location: stopLoc, atKm: Math.round(cumulativeDist) });
-            const found = await searchStationsAtLocation(stopLoc, selectedNetworks, searchRadius);
+            const found = await searchStationsAtLocation(stopLoc, searchRadius);
             allFoundStations.push(...found);
             currentSegmentDist = 0;
           }
@@ -1477,8 +1508,9 @@ function MapView({
 
         const finalUniqueMap = new window.Map();
         allFoundStations.forEach(res => {
-          // แสดงเฉพาะเครือข่ายที่รู้จัก (ตัดสถานีอื่น ๆ ออก)
-          if (res.place_id && matchStationNetwork(res.name)) {
+          // แสดงเฉพาะเครือข่ายที่รู้จัก และตรงกับเครือข่ายที่ผู้ใช้เลือกไว้ (ไม่เลือกเลย = ทุกเครือข่ายที่รู้จัก)
+          const net = matchStationNetwork(res.name);
+          if (res.place_id && net && (selectedNetworks.length === 0 || selectedNetworks.includes(net.id))) {
             // ระบุว่าสถานีอยู่ฝั่งไหนของทิศทางเดินทาง (ซ้าย/ขวา/ก้ำกึ่ง) ด้วยเส้นละเอียด
             res.side = sideOfRoute(res.geometry.location, sidePath);
             finalUniqueMap.set(res.place_id, res);
@@ -1509,11 +1541,16 @@ function MapView({
           bounds.extend(route.start_location);
           bounds.extend(route.end_location);
           stops.forEach(s => bounds.extend(s.location));
-          map?.fitBounds(bounds, { padding: 80 });
+          map?.fitBounds(bounds, 80);
         }
 
       } catch (err) {
         console.error("Route planning failed", err);
+        toast({
+          variant: 'destructive',
+          title: 'คำนวณเส้นทางไม่สำเร็จ',
+          description: 'ไม่พบเส้นทางจากจุดเริ่มต้นไปปลายทาง — ตรวจสอบชื่อสถานที่หรือการเชื่อมต่อ แล้วลองใหม่อีกครั้ง',
+        });
       } finally {
         setIsLoading(false);
       }
@@ -1587,11 +1624,6 @@ function MapView({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [geo.lat, geo.lng, geo.ready, isDriving, nextStopIndex]);
-
-  // ปั๊มที่จะใช้จริงของแต่ละจุด: ที่เลือกเอง หรือเลือกอัตโนมัติให้
-  const resolvedStops: (any | null)[] = plannedStops.map((stop: any, i: number) =>
-    selectedStops[i] ?? pickBestStation(stop.candidates)
-  );
 
   const openInGoogleMaps = () => {
     if (!directionsRenderer) return;

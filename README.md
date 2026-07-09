@@ -20,14 +20,17 @@ npm run dev
 |--------|----------|
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | Google Maps JavaScript API key |
 
+> 🚨 **ต้องทำทันที: rotate API key**
+> key เดิมเคยถูกฝังในโค้ดและยังอยู่ใน **ประวัติ git** — ถือว่าหลุดแล้ว
+> เข้า [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials)
+> **สร้าง key ใหม่ + ลบ/ปิด key เก่า** แล้วตั้งค่า key ใหม่เป็น env variable เท่านั้น (โค้ดไม่มี fallback แล้ว)
+>
 > ⚠️ **เรื่องความปลอดภัยของ API key**
 > key ของ Google Maps JS API เป็น **client-side** — ผู้ใช้มองเห็นได้ในเบราว์เซอร์เสมอ
 > ซ่อนไม่ได้ การป้องกันที่แท้จริงคือ **จำกัดสิทธิ์ key** ใน Google Cloud Console:
 > 1. **Application restrictions → HTTP referrers**: ใส่เฉพาะโดเมนของคุณ
 >    เช่น `https://your-app.vercel.app/*` และ `http://localhost:3000/*`
 > 2. **API restrictions**: เปิดเฉพาะ Maps JavaScript API, Places API, Geocoding API, Directions API
->
-> หาก key เคยถูก commit ลงโค้ด/ประวัติ git แนะนำให้ **สร้าง key ใหม่ (rotate)** แล้วจำกัดสิทธิ์
 
 ## Deploy ขึ้น Vercel
 
@@ -40,3 +43,14 @@ npm run dev
 
 แอปเป็น PWA ติดตั้งได้: เปิด URL ในเบราว์เซอร์ที่รองรับ → เมนู → "ติดตั้งแอป"
 หรือสร้างไฟล์ APK ผ่าน [PWABuilder](https://www.pwabuilder.com) (วาง URL → Package For Stores → Android)
+
+## เช็คลิสต์ก่อนส่งขึ้น Google Play
+
+1. Deploy เว็บขึ้นโดเมนจริง (Vercel) — TWA ต้องชี้ไปที่ URL ที่ออนไลน์อยู่
+2. สร้างแพ็กเกจ Android ผ่าน PWABuilder → ได้ `.aab` + ไฟล์ `assetlinks.json`
+3. วาง `assetlinks.json` ไว้ที่ `public/.well-known/assetlinks.json` แล้ว deploy ใหม่
+   (ยืนยันความเป็นเจ้าของโดเมน — ถ้าไม่ทำ แอปจะเปิดแบบมีแถบเบราว์เซอร์)
+4. ใน Play Console → **App content → Privacy policy** ใส่ URL `https://<โดเมนของคุณ>/privacy`
+   (หน้านี้มีในแอปแล้วที่ `/privacy`)
+5. กรอก **Data safety form**: ประกาศว่าใช้ Location (ไม่เก็บ/ไม่แชร์) และ Microphone (ค้นหาด้วยเสียง)
+6. ตรวจว่า API key ใหม่จำกัด HTTP referrer เฉพาะโดเมนจริงแล้ว
