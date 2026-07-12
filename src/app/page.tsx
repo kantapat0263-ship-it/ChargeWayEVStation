@@ -78,6 +78,7 @@ import {
   Compass,
   Thermometer,
   Smartphone,
+  Repeat,
 } from 'lucide-react';
 import {
   CHARGING_NETWORKS,
@@ -95,6 +96,7 @@ import {
   TARIFF_REFERENCE,
 } from '@/lib/constants';
 import { planStopIndices } from '@/lib/plan-stops';
+import { loadPrefs, savePrefs } from '@/lib/prefs';
 import * as Sentry from '@sentry/nextjs';
 import { type SavedTrip, loadTrips, saveTrip, deleteTrip } from '@/lib/trips';
 import { type Favorites, type FavKind, loadRecents, addRecent, loadFavorites, setFavorite, clearFavorite } from '@/lib/places';
@@ -369,6 +371,38 @@ function TripForm({
   const [isLocating, setIsLocating] = useState(false);
   const [tempMode, setTempMode] = useState<'auto' | 'manual'>('auto'); // อุณหภูมิเฉลี่ย: อัตโนมัติ/กำหนดเอง
   const [manualTemp, setManualTemp] = useState(32); // °C (ใช้เมื่อ tempMode = manual)
+  const [roundTrip, setRoundTrip] = useState(false); // วางแผนไป-กลับ (คำนวณชาร์จรวมทั้งขาไปและขากลับ)
+
+  // จำการตั้งค่าไว้ใน localStorage — โหลดครั้งแรก แล้วบันทึกทุกครั้งที่เปลี่ยน (หลังโหลดเสร็จ)
+  const prefsLoaded = useRef(false);
+  useEffect(() => {
+    const p = loadPrefs();
+    if (p) {
+      if (p.vehicleId !== undefined) setVehicleId(p.vehicleId);
+      if (p.fullRange !== undefined) setFullRange(p.fullRange);
+      if (p.rangeStandard !== undefined) setRangeStandard(p.rangeStandard);
+      if (p.minBatteryThreshold !== undefined) setMinBatteryThreshold(p.minBatteryThreshold);
+      if (p.startSoc !== undefined) setStartSoc(p.startSoc);
+      if (p.targetCharge !== undefined) setTargetCharge(p.targetCharge);
+      if (p.searchRadius !== undefined) setSearchRadius(p.searchRadius);
+      if (p.pricingNetworkId !== undefined) setPricingNetworkId(p.pricingNetworkId);
+      if (p.tariffMode !== undefined) setTariffMode(p.tariffMode);
+      if (p.selectedNetworks !== undefined) setSelectedNetworks(p.selectedNetworks);
+      if (p.tempMode !== undefined) setTempMode(p.tempMode);
+      if (p.manualTemp !== undefined) setManualTemp(p.manualTemp);
+      if (p.roundTrip !== undefined) setRoundTrip(p.roundTrip);
+    }
+    prefsLoaded.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!prefsLoaded.current) return; // อย่าเพิ่งเขียนทับด้วยค่า default ก่อนโหลดเสร็จ
+    savePrefs({
+      vehicleId, fullRange, rangeStandard, minBatteryThreshold, startSoc, targetCharge,
+      searchRadius, pricingNetworkId, tariffMode, selectedNetworks, tempMode, manualTemp, roundTrip,
+    });
+  }, [vehicleId, fullRange, rangeStandard, minBatteryThreshold, startSoc, targetCharge,
+      searchRadius, pricingNetworkId, tariffMode, selectedNetworks, tempMode, manualTemp, roundTrip]);
 
   const selectedVehicle = VEHICLE_MODELS.find(v => v.id === vehicleId) ?? VEHICLE_MODELS[0];
 
@@ -536,6 +570,7 @@ function TripForm({
       tariffMode,
       tempMode,
       manualTemp,
+      roundTrip,
     });
   };
 
@@ -597,6 +632,7 @@ function TripForm({
       searchRadius: t.searchRadius,
       pricingNetworkId: t.pricingNetworkId,
       tariffMode: t.tariffMode,
+      roundTrip,
     });
     toast({ title: 'โหลดทริปแล้ว', description: t.name });
   };
@@ -807,6 +843,36 @@ function TripForm({
               </button>
             ))}
           </div>
+
+          {/* สลับไป-กลับ: คำนวณชาร์จรวมทั้งขาไปและขากลับปลายทางเดิม */}
+          <button
+            type="button"
+            onClick={() => setRoundTrip(v => !v)}
+            className={cn(
+              "w-full flex items-center gap-3 p-3 rounded-2xl border-2 transition-all text-left",
+              roundTrip
+                ? "bg-primary/10 border-primary/40"
+                : "bg-background border-border/60 hover:border-primary/30"
+            )}
+          >
+            <div className={cn("p-2 rounded-xl shrink-0", roundTrip ? "bg-primary text-white" : "bg-muted text-muted-foreground")}>
+              <Repeat className="w-4 h-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className={cn("text-[13px] font-black", roundTrip ? "text-primary" : "text-foreground")}>
+                วางแผนแบบไป-กลับ
+              </p>
+              <p className="text-[10px] font-medium text-muted-foreground">
+                {roundTrip ? 'คำนวณชาร์จทั้งขาไปและขากลับ (กลับที่จุดเริ่มต้น)' : 'ตอนนี้คำนวณเฉพาะขาไป — แตะเพื่อรวมขากลับ'}
+              </p>
+            </div>
+            <div className={cn(
+              "w-11 h-6 rounded-full p-0.5 shrink-0 transition-colors",
+              roundTrip ? "bg-primary" : "bg-muted"
+            )}>
+              <div className={cn("w-5 h-5 rounded-full bg-white shadow transition-transform", roundTrip && "translate-x-5")} />
+            </div>
+          </button>
         </div>
       </section>
 
@@ -1183,6 +1249,8 @@ function MapView({
   const [headingUp, setHeadingUp] = useState(false); // false = ล็อกทิศเหนือ, true = หันหัวไปด้านหน้า
   const [nearAlert, setNearAlert] = useState<{ stopNo: number; km: number } | null>(null);
   const [destinationLatLng, setDestinationLatLng] = useState<google.maps.LatLng | null>(null);
+  // จุดกลับตัวของทริปไป-กลับ (ปลายทางที่ผู้ใช้ใส่) + ระยะสะสมถึงจุดนั้น — null ถ้าเป็นทริปเที่ยวเดียว
+  const [turnaround, setTurnaround] = useState<{ location: google.maps.LatLng; atKm: number } | null>(null);
   const [soundOn, setSoundOn] = useState(true);
   const firedRef = useRef<{ idx: number; t5: boolean; t2: boolean }>({ idx: 0, t5: false, t2: false });
   const isDrivingRef = useRef(false);
@@ -1280,11 +1348,28 @@ function MapView({
     let stale = false;
     const refineRoute = async () => {
       try {
+        const roundTrip = !!tripData.roundTrip;
+        const stopIdxOfStation = resolvedStops
+          .map((s: any, i: number) => (s ? i : -1))
+          .filter((i: number) => i >= 0);
+
+        // จุดแวะทั้งหมดตามลำดับระยะบนเส้นทาง — ปั๊ม (ชาร์จ) + จุดกลับตัว (ผ่านเฉย ๆ ไม่ชาร์จ)
+        const points = stations.map((s: any, k: number) => ({
+          location: s.geometry.location as google.maps.LatLng,
+          atKm: plannedStops[stopIdxOfStation[k]]?.atKm ?? 0,
+          kind: 'station' as const,
+          stopIndex: stopIdxOfStation[k],
+        }));
+        if (roundTrip && turnaround) {
+          points.push({ location: turnaround.location, atKm: turnaround.atKm, kind: 'via' as any, stopIndex: -1 });
+        }
+        points.sort((a, b) => a.atKm - b.atKm);
+
         const directionsService = new google.maps.DirectionsService();
         const result = await directionsService.route({
           origin: tripData.origin,
-          destination: tripData.destination,
-          waypoints: stations.map((s: any) => ({ location: s.geometry.location, stopover: true })),
+          destination: roundTrip ? tripData.origin : tripData.destination,
+          waypoints: points.map(p => ({ location: p.location, stopover: true })),
           optimizeWaypoints: false,
           travelMode: google.maps.TravelMode.DRIVING,
         });
@@ -1304,9 +1389,6 @@ function MapView({
         const target = tripData.targetCharge ?? DEFAULT_TARGET_CHARGE;
 
         // จำลอง %แบตผ่านทีละเลก แล้วชาร์จที่แต่ละปั๊ม "เท่าที่ต้องใช้" ถึงเป้าถัดไป
-        const stopIdxOfStation = resolvedStops
-          .map((s: any, i: number) => (s ? i : -1))
-          .filter((i: number) => i >= 0);
         const now = Date.now();
         let soc = tripData.startSoc ?? 100;
         let clockMin = 0;
@@ -1316,10 +1398,14 @@ function MapView({
         const perStop: ({ kwh: number; min: number } | null)[] = plannedStops.map(() => null);
         const etaByStop: (number | null)[] = plannedStops.map(() => null);
 
-        for (let w = 0; w < stations.length; w++) {
+        for (let w = 0; w < points.length; w++) {
           soc -= (legKm[w] / effRange) * 100;
           clockMin += legMin[w];
           const arrival = new Date(now + clockMin * 60000);
+
+          // จุดกลับตัว (ทริปไป-กลับ) — แค่ผ่าน ไม่ชาร์จ SoC ไหลต่อ
+          if (points[w].kind !== 'station') continue;
+
           const fromSoc = Math.max(0, soc);
           const nextKm = legKm[w + 1] ?? 0;
           // ชาร์จให้พอวิ่งเลกถัดไป + เหลือถึงจุดเริ่มชาร์จ แต่ไม่เกินเป้าหมายที่ตั้งไว้
@@ -1332,15 +1418,15 @@ function MapView({
           rates.push(rate);
           totalCost += kwh * rate;
           totalChargeMin += min;
-          perStop[stopIdxOfStation[w]] = { kwh: Math.round(kwh * 10) / 10, min: Math.round(min) };
-          etaByStop[stopIdxOfStation[w]] = arrival.getTime();
+          perStop[points[w].stopIndex] = { kwh: Math.round(kwh * 10) / 10, min: Math.round(min) };
+          etaByStop[points[w].stopIndex] = arrival.getTime();
           clockMin += min;
           soc = toSoc;
         }
-        clockMin += legMin[stations.length] ?? 0; // เลกสุดท้ายเข้าปลายทาง
+        clockMin += legMin[points.length] ?? 0; // เลกสุดท้ายเข้าปลายทาง
 
         setRouteInfo({
-          distance: `${Math.round(totalKm)} กม.`,
+          distance: `${Math.round(totalKm)} กม.${roundTrip ? ' (ไป-กลับ)' : ''}`,
           duration: formatMinutes(Math.round(totalDriveMin)),
           distanceKm: totalKm,
         });
@@ -1372,7 +1458,7 @@ function MapView({
     refineRoute();
     return () => { stale = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedKey, plannedStops.length, tripData, routesLib, directionsRenderer, rangeAdjust]);
+  }, [resolvedKey, plannedStops.length, tripData, routesLib, directionsRenderer, rangeAdjust, turnaround]);
 
   const startDriving = () => {
     setNextStopIndex(0);
@@ -1551,27 +1637,37 @@ function MapView({
         origin, destination, epaRange, minBatteryThreshold, selectedNetworks,
         batteryKwh = 60, chargingKw = 60, targetCharge = 80,
         searchRadius = 20, pricingNetworkId = 'ptt', tariffMode = 'auto',
-        startSoc = 100, tempMode = 'auto', manualTemp = 32,
+        startSoc = 100, tempMode = 'auto', manualTemp = 32, roundTrip = false,
       } = tripData;
       setSearchRadiusKm(searchRadius);
       const directionsService = new google.maps.DirectionsService();
-      
+
       try {
+        // ไป-กลับ: วิ่ง origin → destination → origin (ปลายทางเป็นจุดกลับตัว/waypoint)
         const result = await directionsService.route({
           origin,
-          destination,
+          destination: roundTrip ? origin : destination,
+          waypoints: roundTrip ? [{ location: destination, stopover: true }] : undefined,
           travelMode: google.maps.TravelMode.DRIVING,
         });
         if (seq !== planSeqRef.current) return; // มีรอบใหม่กว่าแล้ว — ทิ้งผลรอบนี้
 
         directionsRenderer.setDirections(result);
-        const route = result.routes[0].legs[0];
-        setDestinationLatLng(route.end_location);
+        const legs = result.routes[0].legs;
+        // รวมระยะ/เวลาทุกเลก (ไป-กลับมี 2 เลก) — จุดกลับตัวคือปลายเลกแรก
+        const totalDistM = legs.reduce((a, l) => a + (l.distance?.value || 0), 0);
+        const totalDurS = legs.reduce((a, l) => a + (l.duration?.value || 0), 0);
+        const startLoc = legs[0].start_location;
+        const endLoc = legs[legs.length - 1].end_location;
+        setDestinationLatLng(endLoc);
+        setTurnaround(roundTrip
+          ? { location: legs[0].end_location, atKm: Math.round((legs[0].distance?.value || 0) / 1000) }
+          : null);
 
         setRouteInfo({
-          distance: route.distance?.text || '0 km',
-          duration: route.duration?.text || '0 mins',
-          distanceKm: (route.distance?.value || 0) / 1000
+          distance: `${Math.round(totalDistM / 1000)} กม.${roundTrip ? ' (ไป-กลับ)' : ''}`,
+          duration: formatMinutes(Math.round(totalDurS / 60)),
+          distanceKm: totalDistM / 1000
         });
 
         setStations([]);
@@ -1586,14 +1682,14 @@ function MapView({
         const path = result.routes[0].overview_path;
 
         // ===== ปรับระยะวิ่ง EPA ตามอุณหภูมิเฉลี่ย + ความเร็วเฉลี่ย =====
-        const totalKmRaw = (route.distance?.value || 0) / 1000;
-        const totalHrRaw = (route.duration?.value || 0) / 3600;
+        const totalKmRaw = totalDistM / 1000;
+        const totalHrRaw = totalDurS / 3600;
         const avgKmh = totalHrRaw > 0 ? totalKmRaw / totalHrRaw : 90;
         // อุณหภูมิ: ดึงอัตโนมัติที่กลางเส้นทาง หรือใช้ค่าที่ผู้ใช้กำหนด
         let tempC = manualTemp;
         let tempSource: 'auto' | 'manual' | 'fallback' = 'manual';
         if (tempMode === 'auto') {
-          const mid = path[Math.floor(path.length / 2)] || route.start_location;
+          const mid = path[Math.floor(path.length / 2)] || startLoc;
           const fetched = await fetchTemperature(mid.lat(), mid.lng());
           if (seq !== planSeqRef.current) return;
           if (fetched != null) { tempC = fetched; tempSource = 'auto'; }
@@ -1632,11 +1728,11 @@ function MapView({
           return;
         }
 
-        // เส้นทางแบบละเอียด (จุดถี่จาก steps) สำหรับตัดสินฝั่งซ้าย/ขวาให้แม่นบนทางแบ่งเกาะกลาง
+        // เส้นทางแบบละเอียด (จุดถี่จาก steps ทุกเลก) สำหรับตัดสินฝั่งซ้าย/ขวาให้แม่นบนทางแบ่งเกาะกลาง
         const detailedPath: google.maps.LatLng[] = [];
-        (result.routes[0].legs[0].steps || []).forEach((step: any) => {
+        legs.forEach((leg: any) => (leg.steps || []).forEach((step: any) => {
           if (step.path && step.path.length) detailedPath.push(...step.path);
-        });
+        }));
         const sidePath = detailedPath.length > 1 ? detailedPath : path;
 
         // วางจุดแวะด้วยลอจิก pure (มี unit test) แล้วค้นสถานีทุกจุดพร้อมกัน
@@ -1654,8 +1750,8 @@ function MapView({
         const allFoundStations: any[] = foundLists.flat();
 
         // คำนวณเวลาชาร์จ + ค่าไฟต่อจุด + เวลาถึง (ETA) ตามเวลาออกเดินทาง = ตอนนี้
-        const totalKm = (route.distance?.value || 0) / 1000;
-        const totalDurationSec = route.duration?.value || 0;
+        const totalKm = totalDistM / 1000;
+        const totalDurationSec = totalDurS;
         const now = Date.now();
         const chargePercent = Math.max(0, targetCharge - minBatteryThreshold) / 100;
         const perStopKwh = batteryKwh * chargePercent;
@@ -1728,8 +1824,9 @@ function MapView({
         
         if (!isDrivingRef.current) {
           const bounds = new google.maps.LatLngBounds();
-          bounds.extend(route.start_location);
-          bounds.extend(route.end_location);
+          bounds.extend(startLoc);
+          bounds.extend(endLoc);
+          if (roundTrip) bounds.extend(legs[0].end_location); // จุดกลับตัว
           stops.forEach(s => bounds.extend(s.location));
           map?.fitBounds(bounds, 80);
         }
@@ -1833,10 +1930,15 @@ function MapView({
 
     let url = `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destinationStr}`;
 
-    // แทรกปั๊มที่เลือก/เลือกอัตโนมัติของทุกจุดเป็น waypoints ตามลำดับ
-    const waypoints = resolvedStops
-      .filter(Boolean)
-      .map((s: any) => `${s.geometry.location.lat()},${s.geometry.location.lng()}`);
+    // รวมปั๊มที่เลือก + จุดกลับตัว (ทริปไป-กลับ) เรียงตามระยะบนเส้นทาง เป็น waypoints
+    const wp: { lat: number; lng: number; atKm: number }[] = resolvedStops
+      .map((s: any, i: number) => (s ? { lat: s.geometry.location.lat(), lng: s.geometry.location.lng(), atKm: plannedStops[i]?.atKm ?? 0 } : null))
+      .filter(Boolean) as { lat: number; lng: number; atKm: number }[];
+    if (tripData?.roundTrip && turnaround) {
+      wp.push({ lat: turnaround.location.lat(), lng: turnaround.location.lng(), atKm: turnaround.atKm });
+    }
+    wp.sort((a, b) => a.atKm - b.atKm);
+    const waypoints = wp.map(p => `${p.lat},${p.lng}`);
     if (waypoints.length > 0) {
       url += `&waypoints=${encodeURIComponent(waypoints.join('|'))}`;
     }
@@ -1849,7 +1951,7 @@ function MapView({
     const lines = [
       '🚗 แผนเดินทาง EV — ChargeWay',
       `📍 จาก: ${tripData?.origin ?? '-'}`,
-      `🏁 ถึง: ${tripData?.destination ?? '-'}`,
+      `🏁 ${tripData?.roundTrip ? 'ไป-กลับ' : 'ถึง'}: ${tripData?.destination ?? '-'}`,
     ];
     if (tripData?.vehicleName) lines.push(`🔋 รถ: ${tripData.vehicleName}`);
     if (routeInfo) lines.push(`🛣️ ระยะทาง: ${routeInfo.distance} · เวลาขับ ~${routeInfo.duration}`);
