@@ -1521,7 +1521,7 @@ function MapView({
           bounds.extend(route.start_location);
           bounds.extend(route.end_location);
           stops.forEach(s => bounds.extend(s.location));
-          map?.fitBounds(bounds, { padding: 80 });
+          map?.fitBounds(bounds, 80);
         }
 
       } catch (err) {
