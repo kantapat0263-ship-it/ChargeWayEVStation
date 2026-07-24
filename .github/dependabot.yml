@@ -1,0 +1,24 @@
+# เฝ้าระวัง dependency ที่มีช่องโหว่/ล้าสมัยอัตโนมัติ
+# Dependabot จะเปิด PR ให้เมื่อมีเวอร์ชันใหม่หรือมี security advisory
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      # รวม patch/minor เข้า PR เดียวเพื่อลด noise
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"

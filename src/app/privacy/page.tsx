@@ -1,80 +1,96 @@
-import type { Metadata } from 'next';
+'use client';
 
-export const metadata: Metadata = {
-  title: 'นโยบายความเป็นส่วนตัว — ChargeWay',
-  description: 'Privacy Policy ของแอป ChargeWay — Smart EV Journey Planner',
-};
+import { useState } from 'react';
+import Link from 'next/link';
+import { clearMyData, exportMyData } from '@/lib/privacy';
 
-// หน้านโยบายความเป็นส่วนตัว — ใช้เป็น Privacy Policy URL ตอนส่งแอปขึ้น Google Play
-// (Play Console → App content → Privacy policy)
+// หน้านโยบายความเป็นส่วนตัว + ศูนย์จัดการสิทธิ์เจ้าของข้อมูล (PDPA/GDPR)
 export default function PrivacyPage() {
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const onExport = () => {
+    const data = exportMyData();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'chargeway-my-data.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    setMsg('ดาวน์โหลดข้อมูลของคุณแล้ว');
+  };
+
+  const onDelete = () => {
+    if (!window.confirm('ยืนยันลบข้อมูลทั้งหมดของคุณออกจากเครื่องนี้? การกระทำนี้ย้อนกลับไม่ได้')) return;
+    const n = clearMyData();
+    setMsg(`ลบข้อมูลเรียบร้อย (${n} รายการ) — รีเฟรชหน้าเพื่อเริ่มใหม่`);
+  };
+
   return (
-    <main className="max-w-2xl mx-auto px-6 py-12 text-foreground">
-      <h1 className="text-2xl font-extrabold mb-1">นโยบายความเป็นส่วนตัว (Privacy Policy)</h1>
-      <p className="text-sm text-muted-foreground mb-8">ChargeWay — Smart EV Journey Planner · อัปเดตล่าสุด: กรกฎาคม 2026</p>
+    <main className="mx-auto max-w-2xl px-5 py-8 text-foreground">
+      <Link href="/" className="text-[13px] font-bold text-primary">&larr; กลับหน้าแผนที่</Link>
+      <h1 className="mt-3 text-2xl font-black">นโยบายความเป็นส่วนตัว</h1>
+      <p className="mt-1 text-[12px] text-muted-foreground">ปรับปรุงล่าสุด: 21 มิ.ย. 2026</p>
 
-      <section className="space-y-6 text-sm leading-relaxed">
+      <section className="mt-6 space-y-4 text-[13px] leading-relaxed">
         <div>
-          <h2 className="text-base font-bold mb-2">1. ข้อมูลที่แอปใช้งาน</h2>
-          <ul className="list-disc pl-5 space-y-1.5">
-            <li>
-              <strong>ตำแหน่งที่ตั้ง (Location)</strong> — ใช้เพื่อกำหนดจุดเริ่มต้นการเดินทาง
-              และติดตามตำแหน่งระหว่างโหมดขับขี่เพื่อแจ้งเตือนเมื่อใกล้จุดชาร์จ
-              ข้อมูลตำแหน่งถูกประมวลผลบนอุปกรณ์ของคุณเท่านั้น เราไม่จัดเก็บหรือส่งตำแหน่งของคุณไปยังเซิร์ฟเวอร์ของเรา
-            </li>
-            <li>
-              <strong>ไมโครโฟน (Microphone)</strong> — ใช้เฉพาะเมื่อคุณกดปุ่มค้นหาด้วยเสียง
-              เสียงถูกแปลงเป็นข้อความโดยบริการรู้จำเสียงของเบราว์เซอร์/ระบบปฏิบัติการ เราไม่บันทึกเสียงของคุณ
-            </li>
-            <li>
-              <strong>ข้อมูลทริปและการตั้งค่า</strong> — ทริปที่บันทึก รายการโปรด ปลายทางล่าสุด และธีม
-              ถูกเก็บไว้ในอุปกรณ์ของคุณ (localStorage) เท่านั้น ไม่ถูกส่งออกไปภายนอก
-            </li>
+          <h2 className="font-black text-base mb-1">1. เราเก็บข้อมูลอะไรบ้าง</h2>
+          <p>ChargeWay เก็บข้อมูลต่อไปนี้ไว้<b>บนเครื่องของคุณ (localStorage)</b> เท่านั้น:</p>
+          <ul className="list-disc pl-5 mt-1 space-y-0.5">
+            <li>ตำแหน่ง GPS — ใช้แสดงตำแหน่งบนแผนที่และค้นหาสถานีใกล้เคียง (ขอเฉพาะตอนใช้งาน)</li>
+            <li>ทริปที่บันทึก จุดเริ่มต้น/ปลายทาง และรายการโปรด (บ้าน/ที่ทำงาน)</li>
+            <li>การตั้งค่าธีม (สว่าง/มืด)</li>
+            <li>เสียงพูดค้นหา — ประมวลผลผ่านเบราว์เซอร์ ไม่ถูกบันทึกไว้</li>
           </ul>
         </div>
 
         <div>
-          <h2 className="text-base font-bold mb-2">2. บริการภายนอกที่แอปเรียกใช้</h2>
-          <ul className="list-disc pl-5 space-y-1.5">
-            <li>
-              <strong>Google Maps Platform</strong> (แผนที่ ค้นหาสถานที่ เส้นทาง) — เมื่อใช้งานแผนที่
-              ข้อมูลคำค้นและพิกัดที่เกี่ยวข้องจะถูกส่งไปยัง Google ตาม{' '}
-              <a href="https://policies.google.com/privacy" className="text-primary underline" target="_blank" rel="noopener noreferrer">
-                นโยบายความเป็นส่วนตัวของ Google
-              </a>
-            </li>
-            <li>
-              <strong>Open-Meteo</strong> (อุณหภูมิตามเส้นทาง) — ส่งเฉพาะพิกัดกลางเส้นทาง (ปัดทศนิยม)
-              เพื่อขอข้อมูลอุณหภูมิ ไม่มีข้อมูลระบุตัวตน
-            </li>
-          </ul>
-        </div>
-
-        <div>
-          <h2 className="text-base font-bold mb-2">3. สิ่งที่เราไม่ทำ</h2>
-          <ul className="list-disc pl-5 space-y-1.5">
-            <li>ไม่มีระบบบัญชีผู้ใช้ — เราไม่เก็บชื่อ อีเมล หรือข้อมูลระบุตัวตนใด ๆ</li>
-            <li>ไม่ขายหรือแบ่งปันข้อมูลของคุณให้บุคคลที่สาม</li>
-            <li>ไม่ติดตามพฤติกรรมการใช้งานข้ามแอป/เว็บไซต์อื่น</li>
-          </ul>
-        </div>
-
-        <div>
-          <h2 className="text-base font-bold mb-2">4. การลบข้อมูล</h2>
+          <h2 className="font-black text-base mb-1">2. เราไม่ทำอะไรกับข้อมูล</h2>
           <p>
-            ข้อมูลทั้งหมดอยู่บนอุปกรณ์ของคุณ — ลบได้ทุกเมื่อโดยล้างข้อมูลแอป/เบราว์เซอร์
-            (Clear site data) หรือถอนการติดตั้งแอป
+            เรา<b>ไม่มีเซิร์ฟเวอร์ฐานข้อมูล ไม่ส่งข้อมูลของคุณออกนอกเครื่อง ไม่ขาย ไม่แชร์</b>{' '}
+            กับบุคคลที่สาม และไม่ติดตามตัวตนของคุณ
           </p>
         </div>
 
         <div>
-          <h2 className="text-base font-bold mb-2">5. ติดต่อเรา</h2>
+          <h2 className="font-black text-base mb-1">3. บริการภายนอกที่แอปเรียกใช้</h2>
+          <ul className="list-disc pl-5 mt-1 space-y-0.5">
+            <li><b>Google Maps</b> — แสดงแผนที่ ค้นหาสถานี และนำทาง (อยู่ภายใต้นโยบายของ Google)</li>
+            <li><b>Open-Meteo</b> — อุณหภูมิเพื่อประมาณระยะวิ่ง (ส่งเฉพาะพิกัดคร่าว ๆ ไม่มีตัวตน)</li>
+          </ul>
+        </div>
+
+        <div>
+          <h2 className="font-black text-base mb-1">4. สิทธิ์ของคุณ (PDPA / GDPR)</h2>
           <p>
-            หากมีคำถามเกี่ยวกับนโยบายนี้ ติดต่อได้ที่{' '}
-            <a href="mailto:kantapat0263@gmail.com" className="text-primary underline">kantapat0263@gmail.com</a>
+            เนื่องจากข้อมูลอยู่บนเครื่องคุณ คุณควบคุมได้เต็มที่ — ส่งออกสำเนา หรือลบทั้งหมดได้ทันที
+            ด้วยปุ่มด้านล่าง
           </p>
         </div>
       </section>
+
+      <section className="mt-6 rounded-2xl border border-border/60 p-4">
+        <h2 className="font-black text-base mb-2">ศูนย์จัดการข้อมูลของฉัน</h2>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={onExport}
+            className="h-9 px-4 rounded-xl border border-border text-[13px] font-bold"
+          >
+            ส่งออกข้อมูลของฉัน (.json)
+          </button>
+          <button
+            onClick={onDelete}
+            className="h-9 px-4 rounded-xl bg-red-600 text-white text-[13px] font-bold"
+          >
+            ลบข้อมูลของฉันทั้งหมด
+          </button>
+        </div>
+        {msg && <p className="mt-3 text-[12px] font-bold text-primary">{msg}</p>}
+      </section>
+
+      <p className="mt-6 text-[12px] text-muted-foreground">
+        มีคำถามด้านความเป็นส่วนตัว ติดต่อผู้ดูแลแอปได้ที่อีเมลที่ระบุในหน้าโปรเจกต์
+      </p>
     </main>
   );
 }

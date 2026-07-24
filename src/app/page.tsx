@@ -105,9 +105,17 @@ import { useGeoWatch } from '@/hooks/use-geo-watch';
 import { useWakeLock } from '@/hooks/use-wake-lock';
 import { cn } from '@/lib/utils';
 
-// ตั้งค่า NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ใน .env.local / Vercel (ดู README)
-// ห้ามฝัง key ในโค้ด — key เดิมที่เคยอยู่ตรงนี้หลุดใน git history แล้ว ต้อง rotate ใน Google Cloud Console
+// ตั้งค่า NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ใน .env.local / Vercel (ดู README + .env.example)
+// หมายเหตุ: key ของ Google Maps เป็น client-side โดยธรรมชาติ — ความปลอดภัยที่แท้จริง
+// มาจากการ "จำกัดสิทธิ์ key" ใน Google Cloud (HTTP referrer + จำกัด API ที่ใช้) ไม่ใช่การซ่อน key
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
+
+if (typeof window !== "undefined" && !GOOGLE_MAPS_API_KEY) {
+  // เตือนตอน dev ถ้าลืมตั้งค่า env — กันแผนที่ขึ้นว่างเปล่าแบบงง ๆ
+  console.warn(
+    "[ChargeWay] ไม่พบ NEXT_PUBLIC_GOOGLE_MAPS_API_KEY — ตั้งค่าใน .env.local หรือ Vercel ก่อนใช้งานแผนที่"
+  );
+}
 
 // จัดการธีมสว่าง/มืด เก็บค่าใน localStorage และสลับคลาส .dark บน <html>
 function useTheme(): [boolean, () => void] {
@@ -1793,9 +1801,12 @@ function MapView({
 
         const finalUniqueMap = new window.Map();
         allFoundStations.forEach(res => {
-          // แสดงเฉพาะเครือข่ายที่รู้จัก และตรงกับเครือข่ายที่ผู้ใช้เลือกไว้ (ไม่เลือกเลย = ทุกเครือข่ายที่รู้จัก)
+          // แสดงเฉพาะเครือข่ายที่ "ผู้ใช้เลือกไว้" เท่านั้น
+          // (Google nearbySearch คืนปั๊มเครือข่ายอื่นที่อยู่ใกล้ ๆ ปนมาด้วย จึงต้องกรองซ้ำที่นี่)
+          // ถ้าไม่ได้เลือกเครือข่ายใดเลย = แสดงทุกเครือข่ายที่รู้จัก
           const net = matchStationNetwork(res.name);
-          if (res.place_id && net && (selectedNetworks.length === 0 || selectedNetworks.includes(net.id))) {
+          const allowed = net && (selectedNetworks.length === 0 || selectedNetworks.includes(net.id));
+          if (res.place_id && allowed) {
             // ระบุว่าสถานีอยู่ฝั่งไหนของทิศทางเดินทาง (ซ้าย/ขวา/ก้ำกึ่ง) ด้วยเส้นละเอียด
             res.side = sideOfRoute(res.geometry.location, sidePath);
             finalUniqueMap.set(res.place_id, res);
@@ -1944,6 +1955,36 @@ function MapView({
     }
 
     window.open(url, '_blank');
+  };
+
+  // เปิดแอปของเครือข่ายปั๊มตรง ๆ ถ้าติดตั้งแล้ว (Android) ไม่งั้นไปหน้า Store
+  // หมายเหตุ: แอปเครือข่ายไม่มี deep link ระดับ "หน้าสถานี" จึงคัดลอกชื่อสถานีไว้ให้
+  // ผู้ใช้วางในช่องค้นหาของแอปเพื่อไปยังสถานีนั้นได้ทันที
+  const openNetworkApp = (net: { short: string; appUrl?: string; androidPackage?: string }, stationName?: string) => {
+    if (stationName) {
+      navigator.clipboard?.writeText(stationName).catch(() => {});
+    }
+    toast({
+      title: `กำลังเปิดแอป ${net.short}`,
+      description: stationName
+        ? `คัดลอกชื่อ “${stationName}” ไว้ให้แล้ว — วางในช่องค้นหาของแอปเพื่อไปหน้าสถานีนี้`
+        : 'เปิดแอปเครือข่ายเพื่อดูสถานะ/จองเอง',
+    });
+
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    const isAndroid = /Android/i.test(ua);
+
+    // Android: ใช้ intent:// เพื่อเปิดแอปถ้าติดตั้งแล้ว ไม่งั้น fallback ไป Play Store
+    if (isAndroid && net.androidPackage) {
+      const fallback = net.appUrl ?? `https://play.google.com/store/apps/details?id=${net.androidPackage}`;
+      window.location.href =
+        `intent://#Intent;package=${net.androidPackage};` +
+        `S.browser_fallback_url=${encodeURIComponent(fallback)};end`;
+      return;
+    }
+
+    // iOS / เดสก์ท็อป: เปิดหน้า Store ของแอป (เปิดแอปตรง ๆ ข้ามเว็บไม่รองรับ)
+    if (net.appUrl) window.open(net.appUrl, '_blank');
   };
 
   // สร้างข้อความสรุปทริปสำหรับแชร์/คัดลอก
@@ -2139,16 +2180,15 @@ function MapView({
                   const net = matchStationNetwork(selectedStation.name);
                   if (!net?.appUrl) return null;
                   return (
-                    <a href={net.appUrl} target="_blank" rel="noopener noreferrer" className="block">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-full mt-2 h-8 text-[10px] font-bold rounded-xl gap-1"
-                        style={{ borderColor: net.color, color: net.color }}
-                      >
-                        <Smartphone className="w-3.5 h-3.5" /> เปิดแอป {net.short} (ดูสถานะ/จองเอง)
-                      </Button>
-                    </a>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full mt-2 h-8 text-[10px] font-bold rounded-xl gap-1"
+                      style={{ borderColor: net.color, color: net.color }}
+                      onClick={() => openNetworkApp(net, selectedStation.name)}
+                    >
+                      <Smartphone className="w-3.5 h-3.5" /> เปิดแอป {net.short} หน้าสถานีนี้
+                    </Button>
                   );
                 })()}
               </div>
