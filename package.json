@@ -51,7 +51,8 @@
     "zod": "^3.24.2"
   },
   "overrides": {
-    "postcss": "$postcss"
+    "postcss": "$postcss",
+    "sharp": "^0.35.3"
   },
   "devDependencies": {
     "@types/node": "^20",

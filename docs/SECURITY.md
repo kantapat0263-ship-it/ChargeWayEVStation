@@ -86,8 +86,8 @@ ChargeWay เป็นเว็บแอป **ฝั่ง client ล้วน**
 1. **ลบ dependency ที่ไม่ได้ใช้:** `genkit`, `@genkit-ai/google-genai`, `firebase`, `genkit-cli`
    พร้อมลบโฟลเดอร์ `src/ai/` และ script `genkit:dev` / `genkit:watch` → 95 → 10 ช่องโหว่
 2. **`npm audit fix`** (ไม่ breaking) → 10 → 2
-3. **อัป `next` 15.5.9 → 15.5.20** (patch ใน 15.x ปิด DoS/request-smuggling advisories) → 2 → 2 (postcss)
-4. **`overrides.postcss = $postcss`** บังคับ postcss ที่ next bundle มาให้เป็น 8.5.18 → **0**
+3. **อัป `next` 15.5.9 → 15.5.21** (patch ใน 15.x ปิด DoS/request-smuggling + advisory ใหม่ที่ประกาศภายหลัง)
+4. **`overrides`**: `postcss → 8.5.18` (ปิด XSS build-time) และ `sharp → 0.35.3` (ปิด libvips CVE-2026-*) → **0**
 
 > ไม่ใช้ `npm audit fix --force` เพราะมันจะ **ดาวน์เกรด next → 9.3.3 (breaking)** ซึ่งผิด
 
