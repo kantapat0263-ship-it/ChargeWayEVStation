@@ -79,6 +79,7 @@ import {
   Thermometer,
   Smartphone,
   Repeat,
+  RefreshCw,
 } from 'lucide-react';
 import {
   CHARGING_NETWORKS,
@@ -97,6 +98,8 @@ import {
 } from '@/lib/constants';
 import { planStopIndices } from '@/lib/plan-stops';
 import { loadPrefs, savePrefs } from '@/lib/prefs';
+import { readStationCache, writeStationCache, clearStationCache, type CachedStation } from '@/lib/station-cache';
+import { saveLastTrip, loadLastTrip } from '@/lib/last-trip';
 import * as Sentry from '@sentry/nextjs';
 import { type SavedTrip, loadTrips, saveTrip, deleteTrip } from '@/lib/trips';
 import { type Favorites, type FavKind, loadRecents, addRecent, loadFavorites, setFavorite, clearFavorite } from '@/lib/places';
@@ -401,6 +404,38 @@ function TripForm({
       if (p.roundTrip !== undefined) setRoundTrip(p.roundTrip);
     }
     prefsLoaded.current = true;
+
+    // กู้คืนทริปล่าสุด: ตั้งต้นทาง/ปลายทาง แล้ววางแผนซ้ำอัตโนมัติ
+    // (Nearby ดึงจากแคช → แทบไม่ยิง API; แผนไม่หายเวลามือถือรีโหลดกลางทาง)
+    const last = loadLastTrip();
+    if (last) {
+      setOrigin(last.origin);
+      setDestination(last.destination);
+      const vehId = p?.vehicleId ?? VEHICLE_MODELS[0].id;
+      const veh = VEHICLE_MODELS.find(v => v.id === vehId) ?? VEHICLE_MODELS[0];
+      const fRange = p?.fullRange ?? veh.rangeKm;
+      const rStd = p?.rangeStandard ?? veh.standard;
+      onPlanTrip({
+        origin: last.origin,
+        destination: last.destination,
+        fullRange: fRange,
+        rangeStandard: rStd,
+        epaRange: toEpaRange(fRange, rStd),
+        minBatteryThreshold: p?.minBatteryThreshold ?? 15,
+        startSoc: p?.startSoc ?? 100,
+        selectedNetworks: p?.selectedNetworks ?? CHARGING_NETWORKS.map(n => n.id),
+        vehicleName: veh.name,
+        batteryKwh: veh.batteryKwh,
+        chargingKw: veh.maxDcKw,
+        targetCharge: p?.targetCharge ?? DEFAULT_TARGET_CHARGE,
+        searchRadius: p?.searchRadius ?? 20,
+        pricingNetworkId: p?.pricingNetworkId ?? 'ptt',
+        tariffMode: p?.tariffMode ?? 'auto',
+        tempMode: p?.tempMode ?? 'auto',
+        manualTemp: p?.manualTemp ?? 32,
+        roundTrip: p?.roundTrip ?? false,
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -560,6 +595,7 @@ function TripForm({
   const handlePlanTrip = () => {
     if (!origin || !destination) return;
     setRecents(addRecent(destination)); // จำปลายทางล่าสุด
+    saveLastTrip({ origin, destination }); // จำทริปล่าสุดไว้กู้คืนตอนรีโหลด
     onPlanTrip({
       origin,
       destination,
@@ -580,6 +616,13 @@ function TripForm({
       manualTemp,
       roundTrip,
     });
+  };
+
+  // ล้างแคชสถานีแล้ววางแผนใหม่ — ใช้เมื่ออยากได้ข้อมูลปั๊มล่าสุด (เช่น มีปั๊มเปิดใหม่)
+  const handleRefreshStations = () => {
+    if (!origin || !destination) return;
+    clearStationCache();
+    handlePlanTrip();
   };
 
   // ===== บันทึก/โหลดทริป =====
@@ -1194,6 +1237,18 @@ function TripForm({
           : <LocateFixed className="w-5.5 h-5.5 transition-transform group-hover:rotate-12" />}
         {isPlanning ? 'กำลังคำนวณ…' : 'คำนวณเส้นทางและจุดชาร์จ'}
       </Button>
+
+      {origin && destination && (
+        <button
+          type="button"
+          onClick={handleRefreshStations}
+          disabled={isPlanning}
+          className="mt-2.5 w-full flex items-center justify-center gap-1.5 text-[12px] font-bold text-muted-foreground hover:text-primary disabled:opacity-40 transition-colors"
+        >
+          <RefreshCw className={cn("w-3.5 h-3.5", isPlanning && "animate-spin")} />
+          รีเฟรชสถานี (ดึงข้อมูลปั๊มใหม่)
+        </button>
+      )}
     </div>
   );
 }
@@ -1587,8 +1642,25 @@ function MapView({
   // ลองใช้ Places API (New) ก่อน (1 call) ถ้าโปรเจกต์ยังไม่เปิดใช้จะ fallback ไป API เก่า (2 calls)
   const searchStationsAtLocation = useCallback(async (location: google.maps.LatLng, radiusKm: number = 20) => {
     if (!placesLib || !map) return [];
+    const lat = location.lat(), lng = location.lng();
 
-    // ----- Places API (New): Place.searchNearby -----
+    // ----- แคช: คืนผลเดิม ไม่ยิง API (กันวางแผนเส้นทางเดิมซ้ำแล้วยิง Nearby ใหม่ทุกครั้ง) -----
+    const cached = readStationCache(lat, lng, radiusKm);
+    if (cached) {
+      return cached.map(c => ({
+        place_id: c.place_id,
+        name: c.name,
+        geometry: { location: new google.maps.LatLng(c.lat, c.lng) },
+        rating: c.rating,
+        user_ratings_total: c.user_ratings_total,
+        vicinity: c.vicinity ?? '',
+      }));
+    }
+
+    let results: any[] = [];
+    let usedNew = false;
+
+    // ----- Places API (New): Place.searchNearby (1 call) -----
     const PlaceCtor = (google.maps.places as any).Place;
     if (PlaceCtor?.searchNearby) {
       try {
@@ -1598,40 +1670,58 @@ function MapView({
           maxResultCount: 20,
           fields: ['id', 'displayName', 'location', 'rating', 'userRatingCount', 'formattedAddress', 'photos'],
         });
-        return (places ?? []).map(placeToLegacy);
+        results = (places ?? []).map(placeToLegacy);
+        usedNew = true;
       } catch {
         // โปรเจกต์ยังไม่เปิด Places API (New) หรือ SDK รุ่นเก่า — ใช้เส้นทาง legacy ต่อ
       }
     }
 
-    // ----- Legacy fallback: PlacesService.nearbySearch -----
-    const service = new google.maps.places.PlacesService(map);
-    const requests: google.maps.places.PlaceSearchRequest[] = [
-      { location, radius: radiusKm * 1000, type: 'car_charging_station' },
-      { location, radius: radiusKm * 1000, keyword: 'สถานีชาร์จ EV charging station' },
-    ];
+    // ----- Legacy fallback: PlacesService.nearbySearch (เฉพาะเมื่อ New ใช้ไม่ได้) -----
+    if (!usedNew) {
+      const service = new google.maps.places.PlacesService(map);
+      const requests: google.maps.places.PlaceSearchRequest[] = [
+        { location, radius: radiusKm * 1000, type: 'car_charging_station' },
+        { location, radius: radiusKm * 1000, keyword: 'สถานีชาร์จ EV charging station' },
+      ];
 
-    const searchPromises = requests.map(request => {
-      return new Promise<any[]>((resolve) => {
-        service.nearbySearch(request, (results, status) => {
-          if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-            resolve(results);
-          } else {
-            resolve([]);
-          }
+      const searchPromises = requests.map(request => {
+        return new Promise<any[]>((resolve) => {
+          service.nearbySearch(request, (res, status) => {
+            if (status === google.maps.places.PlacesServiceStatus.OK && res) {
+              resolve(res);
+            } else {
+              resolve([]);
+            }
+          });
         });
       });
-    });
 
-    const resultsArray = await Promise.all(searchPromises);
-    const allResults = resultsArray.flat();
+      const resultsArray = await Promise.all(searchPromises);
+      const uniqueMap = new window.Map();
+      resultsArray.flat().forEach(res => {
+        if (res.place_id) uniqueMap.set(res.place_id, res);
+      });
+      results = Array.from(uniqueMap.values());
+    }
 
-    const uniqueMap = new window.Map();
-    allResults.forEach(res => {
-      if (res.place_id) uniqueMap.set(res.place_id, res);
-    });
+    // เก็บแคชเฉพาะเมื่อเจอสถานี (กันแคชผลว่างจาก network fail ชั่วคราว)
+    if (results.length > 0) {
+      const serialized: CachedStation[] = results
+        .filter(r => r.place_id && r.geometry?.location)
+        .map(r => ({
+          place_id: r.place_id,
+          name: r.name,
+          lat: r.geometry.location.lat(),
+          lng: r.geometry.location.lng(),
+          rating: r.rating,
+          user_ratings_total: r.user_ratings_total,
+          vicinity: r.vicinity,
+        }));
+      writeStationCache(lat, lng, radiusKm, serialized);
+    }
 
-    return Array.from(uniqueMap.values());
+    return results;
   }, [placesLib, map]);
 
   useEffect(() => {
