@@ -1,6 +1,7 @@
 import type {Metadata, Viewport} from 'next';
 import './globals.css';
 import { SwRegister } from '@/components/sw-register';
+import { PrivacyConsent } from '@/components/privacy-consent';
 
 export const metadata: Metadata = {
   title: 'ChargeWay',
@@ -38,6 +39,7 @@ export default function RootLayout({
       <body className="font-body antialiased selection:bg-primary/20 bg-background text-foreground">
         {children}
         <SwRegister />
+        <PrivacyConsent />
       </body>
     </html>
   );
