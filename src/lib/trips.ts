@@ -7,6 +7,8 @@ export interface SavedTrip {
   createdAt: number;
   origin: string;
   destination: string;
+  waypoints?: string[];   // จุดแวะระหว่างทาง (ผู้ใช้กำหนดเอง)
+  roundTrip?: boolean;    // วนกลับจุดเริ่มต้น
   vehicleId: string;
   fullRange: number;
   rangeStandard: RangeStandard;

@@ -78,6 +78,8 @@ import {
   Compass,
   Thermometer,
   Smartphone,
+  Plus,
+  Repeat,
 } from 'lucide-react';
 import {
   CHARGING_NETWORKS,
@@ -322,6 +324,9 @@ function TripForm({
 }) {
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
+  // จุดแวะระหว่างทางที่ผู้ใช้กำหนดเอง (เรียงตามลำดับการเดินทาง) + ตัวเลือกวนกลับจุดเริ่มต้น
+  const [waypoints, setWaypoints] = useState<string[]>([]);
+  const [roundTrip, setRoundTrip] = useState(false);
   const [vehicleId, setVehicleId] = useState(VEHICLE_MODELS[0].id);
   const [fullRange, setFullRange] = useState(VEHICLE_MODELS[0].rangeKm);
   const [rangeStandard, setRangeStandard] = useState<RangeStandard>(VEHICLE_MODELS[0].standard);
@@ -481,12 +486,25 @@ function TripForm({
     );
   };
 
+  // ===== จัดการจุดแวะ =====
+  const MAX_WAYPOINTS = 8;
+  const addWaypoint = () => setWaypoints(prev => (prev.length >= MAX_WAYPOINTS ? prev : [...prev, ""]));
+  const updateWaypoint = (i: number, val: string) => setWaypoints(prev => prev.map((w, idx) => (idx === i ? val : w)));
+  const removeWaypoint = (i: number) => setWaypoints(prev => prev.filter((_, idx) => idx !== i));
+
   const handlePlanTrip = () => {
-    if (!origin || !destination) return;
-    setRecents(addRecent(destination)); // จำปลายทางล่าสุด
+    const cleanWaypoints = waypoints.map(w => w.trim()).filter(Boolean);
+    // ต้องมีจุดเริ่มต้น และมีปลายทางหรืออย่างน้อยหนึ่งจุดแวะ (กรณีไป-กลับอาจไม่กรอกปลายทาง)
+    if (!origin || (!destination && cleanWaypoints.length === 0)) {
+      toast({ variant: 'destructive', title: 'ยังไปต่อไม่ได้', description: 'ใส่จุดเริ่มต้น และปลายทางหรือจุดแวะอย่างน้อย 1 จุด' });
+      return;
+    }
+    if (destination) setRecents(addRecent(destination)); // จำปลายทางล่าสุด
     onPlanTrip({
       origin,
       destination,
+      waypoints: cleanWaypoints,
+      roundTrip,
       fullRange,
       rangeStandard,
       epaRange: actualEpaRange,
@@ -526,7 +544,8 @@ function TripForm({
   const confirmSaveTrip = () => {
     const name = tripName.trim() || `${shortPlace(origin)} → ${shortPlace(destination)}`;
     setSavedTrips(saveTrip({
-      name, origin, destination, vehicleId, fullRange, rangeStandard,
+      name, origin, destination, waypoints: waypoints.map(w => w.trim()).filter(Boolean), roundTrip,
+      vehicleId, fullRange, rangeStandard,
       minBatteryThreshold, startSoc, targetCharge, searchRadius, pricingNetworkId, tariffMode, selectedNetworks,
     }));
     setSaveDialogOpen(false);
@@ -536,6 +555,8 @@ function TripForm({
   const handleLoadTrip = (t: SavedTrip) => {
     setOrigin(t.origin);
     setDestination(t.destination);
+    setWaypoints(t.waypoints ?? []);
+    setRoundTrip(t.roundTrip ?? false);
     setVehicleId(t.vehicleId);
     setFullRange(t.fullRange);
     setRangeStandard(t.rangeStandard);
@@ -550,6 +571,8 @@ function TripForm({
     onPlanTrip({
       origin: t.origin,
       destination: t.destination,
+      waypoints: t.waypoints ?? [],
+      roundTrip: t.roundTrip ?? false,
       fullRange: t.fullRange,
       rangeStandard: t.rangeStandard,
       epaRange: toEpaRange(t.fullRange, t.rangeStandard),
@@ -689,6 +712,42 @@ function TripForm({
             </div>
           </div>
 
+          {/* จุดแวะระหว่างทาง (ผู้ใช้กำหนดเอง) */}
+          {waypoints.map((wp, i) => (
+            <div key={i} className="flex items-center gap-2 group">
+              <div className="relative flex-1">
+                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 grid place-items-center w-5 h-5 rounded-full bg-primary/15 text-primary text-[11px] font-black">
+                  {i + 1}
+                </div>
+                <Input
+                  placeholder={`จุดแวะที่ ${i + 1}`}
+                  value={wp}
+                  onChange={e => updateWaypoint(i, e.target.value)}
+                  className="pl-11 pr-11 h-12 rounded-2xl border-border/80 focus:ring-primary/20 bg-background/50 text-sm font-medium transition-all"
+                />
+                <button
+                  type="button"
+                  title="ลบจุดแวะ"
+                  onClick={() => removeWaypoint(i)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                >
+                  <X className="w-4.5 h-4.5" />
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {/* ปุ่มเพิ่มจุดแวะ */}
+          {waypoints.length < MAX_WAYPOINTS && (
+            <button
+              type="button"
+              onClick={addWaypoint}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-border text-muted-foreground text-[12px] font-bold hover:bg-muted/40 hover:text-primary transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" /> เพิ่มจุดแวะ
+            </button>
+          )}
+
           <div className="flex items-center gap-2 group">
             <div className="relative flex-1">
               <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-secondary transition-colors">
@@ -696,7 +755,7 @@ function TripForm({
               </div>
               <Input
                 ref={destinationInputRef}
-                placeholder="ปลายทาง"
+                placeholder={roundTrip ? "ปลายทาง (จุดไกลสุดก่อนวนกลับ)" : "ปลายทาง"}
                 value={destination}
                 onChange={e => setDestination(e.target.value)}
                 className="pl-11 pr-11 h-13 rounded-2xl border-border/80 focus:ring-secondary/20 bg-background/50 text-sm font-medium transition-all"
@@ -722,6 +781,21 @@ function TripForm({
               <Crosshair className="w-5 h-5" />
             </Button>
           </div>
+
+          {/* วนกลับจุดเริ่มต้น (ไป-กลับ) */}
+          <button
+            type="button"
+            onClick={() => setRoundTrip(v => !v)}
+            aria-pressed={roundTrip}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12px] font-bold transition-colors",
+              roundTrip
+                ? "bg-primary text-primary-foreground"
+                : "border border-border text-muted-foreground hover:bg-muted/40"
+            )}
+          >
+            <Repeat className="w-3.5 h-3.5" /> วนกลับจุดเริ่มต้น (ไป-กลับ)
+          </button>
 
           {/* ทางลัดใส่ปลายทาง: รายการโปรด + ปลายทางล่าสุด */}
           <div className="flex flex-wrap gap-1.5 pt-0.5">
@@ -1352,19 +1426,40 @@ function MapView({
         batteryKwh = 60, chargingKw = 60, targetCharge = 80,
         searchRadius = 20, pricingNetworkId = 'ptt', tariffMode = 'auto',
         startSoc = 100, tempMode = 'auto', manualTemp = 32,
+        waypoints = [], roundTrip = false,
       } = tripData;
       setSearchRadiusKm(searchRadius);
       const directionsService = new google.maps.DirectionsService();
       
       try {
+        // สร้างรายการจุดแวะสำหรับ Directions API
+        const userWps: string[] = (waypoints || []).map((w: string) => (w || '').trim()).filter(Boolean);
+        const isRound = !!roundTrip;
+        // ไป-กลับ: ปลายทางสุดท้าย = จุดเริ่มต้น และเอาปลายทางที่พิมพ์ไว้เป็นจุดแวะสุดท้ายก่อนวนกลับ
+        const effDestination = isRound ? origin : destination;
+        const apiWaypoints = [...userWps];
+        if (isRound && destination && destination.trim()) apiWaypoints.push(destination.trim());
+
         const result = await directionsService.route({
           origin,
-          destination,
+          destination: effDestination,
+          waypoints: apiWaypoints.map((loc: string) => ({ location: loc, stopover: true })),
+          optimizeWaypoints: false, // คงลำดับตามที่ผู้ใช้กรอก
           travelMode: google.maps.TravelMode.DRIVING,
         });
 
         directionsRenderer.setDirections(result);
-        const route = result.routes[0].legs[0];
+        // เส้นทางอาจมีหลายช่วง (leg) เมื่อมีจุดแวะ — รวมค่าทุก leg ให้โค้ดเดิมใช้ต่อได้เหมือนมี leg เดียว
+        const legs = result.routes[0].legs;
+        const totalDistVal = legs.reduce((s: number, l: any) => s + (l.distance?.value || 0), 0);
+        const totalDurVal = legs.reduce((s: number, l: any) => s + (l.duration?.value || 0), 0);
+        const route: any = {
+          start_location: legs[0].start_location,
+          end_location: legs[legs.length - 1].end_location,
+          distance: { value: totalDistVal, text: `${(totalDistVal / 1000).toFixed(totalDistVal < 10000 ? 1 : 0)} กม.` },
+          duration: { value: totalDurVal, text: formatMinutes(Math.round(totalDurVal / 60)) },
+          steps: legs.flatMap((l: any) => l.steps || []),
+        };
         setDestinationLatLng(route.end_location);
 
         setRouteInfo({
@@ -1419,7 +1514,7 @@ function MapView({
         const allFoundStations: any[] = [];
         // เส้นทางแบบละเอียด (จุดถี่จาก steps) สำหรับตัดสินฝั่งซ้าย/ขวาให้แม่นบนทางแบ่งเกาะกลาง
         const detailedPath: google.maps.LatLng[] = [];
-        (result.routes[0].legs[0].steps || []).forEach((step: any) => {
+        (route.steps || []).forEach((step: any) => {
           if (step.path && step.path.length) detailedPath.push(...step.path);
         });
         const sidePath = detailedPath.length > 1 ? detailedPath : path;
@@ -1517,11 +1612,16 @@ function MapView({
         setSelectedStops(stops.map(() => null)); // เริ่มต้นทุกจุด = อัตโนมัติ
         
         if (!isDrivingRef.current) {
-          const bounds = new google.maps.LatLngBounds();
-          bounds.extend(route.start_location);
-          bounds.extend(route.end_location);
-          stops.forEach(s => bounds.extend(s.location));
-          map?.fitBounds(bounds, 80);
+          // ใช้กรอบของเส้นทางทั้งเส้น (ครอบคลุมจุดแวะ/เส้นวนกลับด้วย) ถ้ามี ไม่งั้นค่อยประกอบเอง
+          if (result.routes[0].bounds) {
+            map?.fitBounds(result.routes[0].bounds, 80);
+          } else {
+            const bounds = new google.maps.LatLngBounds();
+            bounds.extend(route.start_location);
+            bounds.extend(route.end_location);
+            stops.forEach(s => bounds.extend(s.location));
+            map?.fitBounds(bounds, 80);
+          }
         }
 
       } catch (err) {
@@ -1610,16 +1710,29 @@ function MapView({
     const dirs = directionsRenderer.getDirections();
     if (!dirs) return;
 
-    const route = dirs.routes[0].legs[0];
-    const originStr = encodeURIComponent(route.start_address);
-    const destinationStr = encodeURIComponent(route.end_address);
+    const legs = dirs.routes[0].legs;
+    const originStr = encodeURIComponent(legs[0].start_address);
+    // ปลายทางจริง = ปลายของ leg สุดท้าย (กรณีมีจุดแวะ/ไป-กลับ)
+    const destinationStr = encodeURIComponent(legs[legs.length - 1].end_address);
 
     let url = `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destinationStr}`;
 
-    // แทรกปั๊มที่เลือก/เลือกอัตโนมัติของทุกจุดเป็น waypoints ตามลำดับ
-    const waypoints = resolvedStops
-      .filter(Boolean)
-      .map((s: any) => `${s.geometry.location.lat()},${s.geometry.location.lng()}`);
+    // รวมจุดแวะของผู้ใช้ (ปลายของแต่ละ leg ยกเว้น leg สุดท้าย) + ปั๊มชาร์จที่เลือก แล้วเรียงตามระยะสะสม
+    const marks: { km: number; loc: string }[] = [];
+    let cum = 0;
+    for (let i = 0; i < legs.length; i++) {
+      cum += (legs[i].distance?.value || 0) / 1000;
+      if (i < legs.length - 1) {
+        const el = legs[i].end_location;
+        marks.push({ km: cum, loc: `${el.lat()},${el.lng()}` });
+      }
+    }
+    resolvedStops.forEach((s: any, i: number) => {
+      if (!s) return;
+      marks.push({ km: plannedStops[i]?.atKm ?? 0, loc: `${s.geometry.location.lat()},${s.geometry.location.lng()}` });
+    });
+    marks.sort((a, b) => a.km - b.km);
+    const waypoints = marks.map(m => m.loc);
     if (waypoints.length > 0) {
       url += `&waypoints=${encodeURIComponent(waypoints.join('|'))}`;
     }
