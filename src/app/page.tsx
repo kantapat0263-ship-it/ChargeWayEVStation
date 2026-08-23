@@ -3,10 +3,11 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { 
-  APIProvider, 
-  Map, 
-  useMapsLibrary, 
-  useMap, 
+  APIProvider,
+  Map,
+  useMapsLibrary,
+  useMap,
+  useApiIsLoaded,
   AdvancedMarker,
   InfoWindow,
   MapMouseEvent
@@ -245,6 +246,27 @@ function StationRating({ rating, total }: { rating?: number; total?: number }) {
   );
 }
 
+// แบนเนอร์เตือนเมื่อแผนที่ใช้งานไม่ได้ (ไม่มี key หรือ key ถูก Google ปฏิเสธ)
+// ไม่มีตัวนี้ ผู้ใช้จะเจออาการ "กดคำนวณแล้วเงียบ" โดยไม่รู้สาเหตุ
+function MapsKeyBanner() {
+  const [authFailed, setAuthFailed] = useState(false);
+
+  useEffect(() => {
+    // Google Maps เรียก callback ชื่อนี้เมื่อ key ไม่ถูกต้อง/ถูกจำกัดสิทธิ์/โดนปิด
+    (window as any).gm_authFailure = () => setAuthFailed(true);
+    return () => { delete (window as any).gm_authFailure; };
+  }, []);
+
+  if (GOOGLE_MAPS_API_KEY && !authFailed) return null;
+  return (
+    <div className="bg-red-600 text-white text-[12px] font-bold px-4 py-2.5 text-center leading-relaxed">
+      {!GOOGLE_MAPS_API_KEY
+        ? 'ยังไม่ได้ตั้งค่า Google Maps API key — ตั้งค่า NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ใน Vercel/.env.local แล้ว deploy ใหม่ แผนที่และการคำนวณเส้นทางจึงจะทำงาน'
+        : 'Google ปฏิเสธ API key นี้ (ไม่ถูกต้อง/ถูกจำกัดสิทธิ์/ถูกลบ) — ตรวจสอบ key และ HTTP referrer ใน Google Cloud Console'}
+    </div>
+  );
+}
+
 export default function ChargeWayApp() {
   const [tripData, setTripData] = useState<any>(null);
   const [isPickingOnMap, setIsPickingOnMap] = useState<'origin' | 'destination' | null>(null);
@@ -252,6 +274,7 @@ export default function ChargeWayApp() {
 
   return (
     <APIProvider apiKey={GOOGLE_MAPS_API_KEY} libraries={['places', 'geocoding', 'routes', 'geometry']}>
+      <MapsKeyBanner />
       <div className="flex flex-col lg:flex-row min-h-screen lg:h-screen w-full bg-background overflow-x-hidden font-body selection:bg-primary/20">
         {/* Left Control Panel */}
         <div className="w-full lg:w-[420px] h-auto lg:h-full flex flex-col border-r border-border bg-card z-20 shadow-2xl relative lg:overflow-hidden">
@@ -356,6 +379,7 @@ function TripForm({
   const destinationInputRef = useRef<HTMLInputElement>(null);
   const placesLib = useMapsLibrary('places');
   const geocodingLib = useMapsLibrary('geocoding');
+  const apiLoaded = useApiIsLoaded(); // สถานะโหลด Google Maps SDK
   const { toast } = useToast();
 
   // ===== ปลายทางง่ายขึ้น: เสียง / ล่าสุด / โปรด =====
@@ -493,6 +517,17 @@ function TripForm({
   const removeWaypoint = (i: number) => setWaypoints(prev => prev.filter((_, idx) => idx !== i));
 
   const handlePlanTrip = () => {
+    // แผนที่ต้องโหลดสำเร็จก่อน ไม่งั้นคำนวณอะไรไม่ได้ — ฟ้องชัด ๆ แทนที่จะเงียบ
+    if (!apiLoaded || typeof google === 'undefined' || !google.maps) {
+      toast({
+        variant: 'destructive',
+        title: 'แผนที่ยังโหลดไม่สำเร็จ',
+        description: !GOOGLE_MAPS_API_KEY
+          ? 'ยังไม่ได้ตั้งค่า Google Maps API key (NEXT_PUBLIC_GOOGLE_MAPS_API_KEY) — ตั้งค่าใน Vercel/.env.local แล้ว deploy ใหม่'
+          : 'ตรวจสอบอินเทอร์เน็ต หรือ API key อาจไม่ถูกต้อง/ถูกจำกัดสิทธิ์ แล้วรีเฟรชหน้า',
+      });
+      return;
+    }
     const cleanWaypoints = waypoints.map(w => w.trim()).filter(Boolean);
     // ต้องมีจุดเริ่มต้น และมีปลายทางหรืออย่างน้อยหนึ่งจุดแวะ (กรณีไป-กลับอาจไม่กรอกปลายทาง)
     if (!origin || (!destination && cleanWaypoints.length === 0)) {
