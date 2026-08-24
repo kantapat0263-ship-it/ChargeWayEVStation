@@ -1,6 +1,8 @@
 // Service Worker ของ ChargeWay — ทำให้ติดตั้งเป็น PWA/APK ได้และเปิดเร็วขึ้น
 // หมายเหตุ: การค้นหาสถานี/แผนที่ของ Google เป็น request ข้ามโดเมน เราปล่อยให้วิ่งเน็ตปกติเสมอ
-const CACHE = 'chargeway-v1';
+// v2: บั๊มเวอร์ชันเพื่อบังคับล้างแคชเก่า — ผู้ใช้ที่ค้างบันเดิลยุคก่อนตั้ง API key
+// จะได้ตัวใหม่อัตโนมัติ (activate ด้านล่างลบแคชที่ชื่อไม่ตรงทิ้งทั้งหมด)
+const CACHE = 'chargeway-v2';
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (event) => {
