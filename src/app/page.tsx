@@ -593,7 +593,15 @@ function TripForm({
   };
 
   const handlePlanTrip = () => {
-    if (!origin || !destination) return;
+    if (!origin || !destination) {
+      // ห้ามเงียบ — เดิม return เฉย ๆ ทำให้ผู้ใช้กดแล้ว "ไม่มีอะไรเกิดขึ้น" โดยไม่รู้สาเหตุ
+      toast({
+        variant: 'destructive',
+        title: 'กรอกยังไม่ครบ',
+        description: !origin ? 'กรอก "จุดเริ่มต้น" ก่อน แล้วกดคำนวณอีกครั้ง' : 'กรอก "ปลายทาง" ก่อน แล้วกดคำนวณอีกครั้ง',
+      });
+      return;
+    }
     setRecents(addRecent(destination)); // จำปลายทางล่าสุด
     saveLastTrip({ origin, destination }); // จำทริปล่าสุดไว้กู้คืนตอนรีโหลด
     onPlanTrip({
