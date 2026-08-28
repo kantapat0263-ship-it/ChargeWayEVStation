@@ -32,3 +32,23 @@ export function planStopIndices(segmentKms: number[], firstLegKm: number, nextLe
 
   return stops;
 }
+
+/**
+ * ระยะ (กม.) ที่ไฟจากการชาร์จที่จุด `from` ต้องครอบคลุม: รวมทุกเลกถัดไป
+ * ข้ามจุดผ่าน (via — ปลายทางระหว่างทาง/จุดกลับตัว ที่ไม่ได้ชาร์จ) ไปจนถึง
+ * ปั๊มถัดไป หรือจุดสิ้นสุดทริป — ถ้านับแค่เลกเดียวจะชาร์จไม่พอเมื่อจุดถัดไปเป็น via
+ * @param kinds ชนิดของจุดแวะตามลำดับบนเส้นทาง ('station' = ปั๊มชาร์จ, 'via' = จุดผ่าน)
+ * @param legKm ระยะของเลกที่ "มาถึง" จุด i — legKm[kinds.length] คือเลกสุดท้ายเข้าปลายทาง
+ * @param from  index ของปั๊มที่กำลังชาร์จ
+ */
+export function kmUntilNextCharge(
+  kinds: readonly ('station' | 'via')[],
+  legKm: readonly number[],
+  from: number,
+): number {
+  let km = legKm[from + 1] ?? 0;
+  for (let n = from + 1; n < kinds.length && kinds[n] !== 'station'; n++) {
+    km += legKm[n + 1] ?? 0;
+  }
+  return km;
+}

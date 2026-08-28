@@ -97,7 +97,7 @@ import {
   UNKNOWN_NETWORK,
   TARIFF_REFERENCE,
 } from '@/lib/constants';
-import { planStopIndices } from '@/lib/plan-stops';
+import { planStopIndices, kmUntilNextCharge } from '@/lib/plan-stops';
 import { loadPrefs, savePrefs } from '@/lib/prefs';
 import { readStationCache, writeStationCache, clearStationCache, type CachedStation } from '@/lib/station-cache';
 import { saveLastTrip, loadLastTrip } from '@/lib/last-trip';
@@ -1519,6 +1519,7 @@ function MapView({
           points.push({ location: v.location, atKm: v.atKm, kind: 'via' as any, stopIndex: -1 });
         });
         points.sort((a, b) => a.atKm - b.atKm);
+        const pointKinds = points.map(p => (p.kind === 'station' ? 'station' : 'via') as 'station' | 'via');
 
         const directionsService = new google.maps.DirectionsService();
         const result = await directionsService.route({
@@ -1562,8 +1563,10 @@ function MapView({
           if (points[w].kind !== 'station') continue;
 
           const fromSoc = Math.max(0, soc);
-          const nextKm = legKm[w + 1] ?? 0;
-          // ชาร์จให้พอวิ่งเลกถัดไป + เหลือถึงจุดเริ่มชาร์จ แต่ไม่เกินเป้าหมายที่ตั้งไว้
+          // ระยะที่ไฟชุดนี้ต้องครอบคลุม: รวมทุกเลกจนถึงปั๊มถัดไปหรือจุดจบทริป
+          // (จุดผ่าน/ปลายทางระหว่างทางไม่ได้ชาร์จ — นับแค่เลกเดียวจะชาร์จขาด)
+          const nextKm = kmUntilNextCharge(pointKinds, legKm, w);
+          // ชาร์จให้พอวิ่งถึงปั๊มถัดไป/ปลายทาง + เหลือถึงจุดเริ่มชาร์จ แต่ไม่เกินเป้าหมายที่ตั้งไว้
           const needForNext = (nextKm / effRange) * 100 + threshold;
           const toSoc = Math.min(target, Math.max(needForNext, fromSoc));
           const kwh = Math.max(0, batteryKwh * (toSoc - fromSoc) / 100);
