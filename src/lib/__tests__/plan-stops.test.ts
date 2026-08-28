@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planStopIndices } from '../plan-stops';
+import { planStopIndices, kmUntilNextCharge } from '../plan-stops';
 
 // เส้นทางจำลอง: segment ละ 10 กม.
 const seg = (n: number, km = 10) => Array(n).fill(km);
@@ -34,5 +34,30 @@ describe('planStopIndices', () => {
     const stops = planStopIndices([300], 100, 200);
     expect(stops).toHaveLength(1);
     expect(stops[0].index).toBe(1);
+  });
+});
+
+describe('kmUntilNextCharge', () => {
+  // legKm[i] = เลกที่มาถึงจุด i; legKm[kinds.length] = เลกสุดท้ายเข้าปลายทาง
+  it('ปั๊มเป็นจุดสุดท้าย → นับเฉพาะเลกเข้าปลายทาง', () => {
+    expect(kmUntilNextCharge(['station'], [100, 170], 0)).toBe(170);
+  });
+
+  it('จุดถัดไปเป็นปั๊ม → นับแค่เลกเดียว', () => {
+    expect(kmUntilNextCharge(['station', 'station'], [100, 80, 60], 0)).toBe(80);
+  });
+
+  it('via คั่นก่อนถึงปั๊มถัดไป → รวมเลกข้าม via (เคสชาร์จขาดเดิม)', () => {
+    // ปั๊ม → via (28 กม.) → ปั๊ม (90 กม.)
+    expect(kmUntilNextCharge(['station', 'via', 'station'], [100, 28, 90, 40], 0)).toBe(118);
+  });
+
+  it('หลังปั๊มมีแต่ via จนจบทริป → รวมทุกเลกถึงปลายทาง', () => {
+    // ปั๊มที่ 307 กม. → ปลายทางระหว่างทาง 28 กม. → กลับบ้านอีก 142 กม.
+    expect(kmUntilNextCharge(['via', 'station', 'via'], [238, 69, 28, 142], 1)).toBe(170);
+  });
+
+  it('เริ่มนับจากปั๊มตัวหลัง ไม่ได้นับซ้ำจากต้นทาง', () => {
+    expect(kmUntilNextCharge(['station', 'via', 'station', 'via'], [50, 30, 40, 20, 60], 2)).toBe(80);
   });
 });
