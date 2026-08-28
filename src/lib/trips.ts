@@ -7,6 +7,8 @@ export interface SavedTrip {
   createdAt: number;
   origin: string;
   destination: string;
+  // ปลายทางทั้งหมดตามลำดับ (รองรับหลายจุด) — ทริปเก่าไม่มีฟิลด์นี้ ให้ใช้ destination เดี่ยวแทน
+  destinations?: string[];
   vehicleId: string;
   fullRange: number;
   rangeStandard: RangeStandard;

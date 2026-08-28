@@ -80,6 +80,7 @@ import {
   Smartphone,
   Repeat,
   RefreshCw,
+  Plus,
 } from 'lucide-react';
 import {
   CHARGING_NETWORKS,
@@ -266,9 +267,12 @@ function StationRating({ rating, total }: { rating?: number; total?: number }) {
   );
 }
 
+// เป้าหมายของการปักหมุดบนแผนที่: 'origin' หรือ id ของช่องปลายทาง (รองรับหลายช่อง)
+type PickTarget = string | null;
+
 export default function ChargeWayApp() {
   const [tripData, setTripData] = useState<any>(null);
-  const [isPickingOnMap, setIsPickingOnMap] = useState<'origin' | 'destination' | null>(null);
+  const [isPickingOnMap, setIsPickingOnMap] = useState<PickTarget>(null);
   const [isPlanning, setIsPlanning] = useState(false); // กันกดวางแผนซ้อนระหว่างคำนวณ
   const [isDark, toggleTheme] = useTheme();
 
@@ -356,6 +360,13 @@ export default function ChargeWayApp() {
   );
 }
 
+// ช่องปลายทางหนึ่งช่อง — id ใช้เป็น key/เป้าหมายของ Autocomplete, ไมค์ และหมุดบนแผนที่
+type DestField = { id: string; value: string };
+let destIdSeq = 0;
+const newDestId = () => `dest-${++destIdSeq}`;
+const toDestFields = (dests: string[]): DestField[] =>
+  (dests.length > 0 ? dests : ['']).map(v => ({ id: newDestId(), value: v }));
+
 function TripForm({
   onPlanTrip,
   isPickingOnMap,
@@ -363,12 +374,13 @@ function TripForm({
   isPlanning,
 }: {
   onPlanTrip: (data: any) => void;
-  isPickingOnMap: 'origin' | 'destination' | null;
-  setIsPickingOnMap: (val: 'origin' | 'destination' | null) => void;
+  isPickingOnMap: PickTarget;
+  setIsPickingOnMap: (val: PickTarget) => void;
   isPlanning: boolean;
 }) {
   const [origin, setOrigin] = useState("");
-  const [destination, setDestination] = useState("");
+  // ปลายทางหลายจุด: แต่ละช่องมี id คงที่ (กันลิสต์เนอร์ของ Autocomplete/ไมค์/หมุดชี้ผิดช่องเมื่อลบแถว)
+  const [destFields, setDestFields] = useState<DestField[]>([{ id: newDestId(), value: "" }]);
   const [vehicleId, setVehicleId] = useState(VEHICLE_MODELS[0].id);
   const [fullRange, setFullRange] = useState(VEHICLE_MODELS[0].rangeKm);
   const [rangeStandard, setRangeStandard] = useState<RangeStandard>(VEHICLE_MODELS[0].standard);
@@ -409,15 +421,17 @@ function TripForm({
     // (Nearby ดึงจากแคช → แทบไม่ยิง API; แผนไม่หายเวลามือถือรีโหลดกลางทาง)
     const last = loadLastTrip();
     if (last) {
+      const lastDests = last.destinations ?? [last.destination];
       setOrigin(last.origin);
-      setDestination(last.destination);
+      setDestFields(toDestFields(lastDests));
       const vehId = p?.vehicleId ?? VEHICLE_MODELS[0].id;
       const veh = VEHICLE_MODELS.find(v => v.id === vehId) ?? VEHICLE_MODELS[0];
       const fRange = p?.fullRange ?? veh.rangeKm;
       const rStd = p?.rangeStandard ?? veh.standard;
       onPlanTrip({
         origin: last.origin,
-        destination: last.destination,
+        destination: lastDests[lastDests.length - 1],
+        destinations: lastDests,
         fullRange: fRange,
         rangeStandard: rStd,
         epaRange: toEpaRange(fRange, rStd),
@@ -459,20 +473,39 @@ function TripForm({
   };
   
   const originInputRef = useRef<HTMLInputElement>(null);
-  const destinationInputRef = useRef<HTMLInputElement>(null);
+  // ช่องปลายทางเป็นไดนามิก — เก็บ input ตาม id และกันผูก Autocomplete ซ้ำด้วย WeakSet
+  const destInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const acAttachedRef = useRef<WeakSet<HTMLInputElement>>(new WeakSet());
   const placesLib = useMapsLibrary('places');
   const geocodingLib = useMapsLibrary('geocoding');
   const { toast } = useToast();
 
+  // ===== จัดการปลายทางหลายช่อง =====
+  const setDestValue = useCallback((id: string, value: string) => {
+    setDestFields(prev => prev.map(f => (f.id === id ? { ...f, value } : f)));
+  }, []);
+  const addDestination = () => setDestFields(prev => [...prev, { id: newDestId(), value: '' }]);
+  const removeDestination = (id: string) => {
+    delete destInputRefs.current[id];
+    setDestFields(prev => (prev.length > 1 ? prev.filter(f => f.id !== id) : prev));
+  };
+  // ปลายทางที่กรอกแล้วตามลำดับ (ตัดช่องว่างทิ้ง) — ตัวสุดท้ายคือปลายทางจริง
+  const filledDestinations = destFields.map(f => f.value.trim()).filter(Boolean);
+  const finalDestination = filledDestinations[filledDestinations.length - 1] ?? '';
+  // ทางลัด (บ้าน/ที่ทำงาน/ล่าสุด) เติมลงช่องปลายทางช่องสุดท้าย
+  const fillLastDestination = (addr: string) => {
+    setDestFields(prev => prev.map((f, i) => (i === prev.length - 1 ? { ...f, value: addr } : f)));
+  };
+
   // ===== ปลายทางง่ายขึ้น: เสียง / ล่าสุด / โปรด =====
   const [recents, setRecents] = useState<string[]>([]);
   const [favorites, setFavorites] = useState<Favorites>({});
-  const [listening, setListening] = useState<'origin' | 'destination' | null>(null);
+  const [listening, setListening] = useState<string | null>(null); // 'origin' หรือ id ของช่องปลายทาง
   useEffect(() => { setRecents(loadRecents()); setFavorites(loadFavorites()); }, []);
 
   // ตั้งค่า/ล้าง รายการโปรด (บ้าน/ที่ทำงาน) จากค่าปลายทางปัจจุบัน
   const handleSetFavorite = (kind: FavKind) => {
-    const addr = destination.trim();
+    const addr = finalDestination;
     if (!addr) {
       toast({ variant: 'destructive', title: 'ยังไม่มีปลายทาง', description: 'ใส่ปลายทางก่อน แล้วกดบันทึกเป็นรายการโปรด' });
       return;
@@ -482,8 +515,8 @@ function TripForm({
   };
   const handleClearFavorite = (kind: FavKind) => setFavorites(clearFavorite(kind));
 
-  // ค้นหาด้วยเสียง (Web Speech Recognition)
-  const startVoice = (target: 'origin' | 'destination') => {
+  // ค้นหาด้วยเสียง (Web Speech Recognition) — target = 'origin' หรือ id ของช่องปลายทาง
+  const startVoice = (target: string) => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) {
       toast({ variant: 'destructive', title: 'อุปกรณ์ไม่รองรับเสียง', description: 'เบราว์เซอร์นี้ยังไม่รองรับการค้นหาด้วยเสียง ลองพิมพ์แทนนะครับ' });
@@ -498,7 +531,7 @@ function TripForm({
       rec.onresult = (e: any) => {
         const text = e.results?.[0]?.[0]?.transcript?.trim();
         if (text) {
-          if (target === 'origin') setOrigin(text); else setDestination(text);
+          if (target === 'origin') setOrigin(text); else setDestValue(target, text);
         }
       };
       rec.onerror = () => {
@@ -519,33 +552,44 @@ function TripForm({
   useEffect(() => {
     const handleLocationUpdate = (e: any) => {
       if (e.detail.type === 'origin') setOrigin(e.detail.address);
-      if (e.detail.type === 'destination') setDestination(e.detail.address);
+      else setDestValue(e.detail.type, e.detail.address); // type = id ของช่องปลายทาง
     };
     window.addEventListener('google-map-picker-update', handleLocationUpdate);
     return () => window.removeEventListener('google-map-picker-update', handleLocationUpdate);
-  }, []);
+  }, [setDestValue]);
 
+  // ผูก Autocomplete กับทุกช่อง (origin + ปลายทางทุกช่อง) — ช่องปลายทางเพิ่ม/ลบได้
+  // จึงเช็คผ่าน WeakSet ให้ผูกครั้งเดียวต่อ input แม้ effect จะรันซ้ำ
   useEffect(() => {
-    if (!placesLib || !originInputRef.current || !destinationInputRef.current) return;
+    if (!placesLib) return;
+    const attached = acAttachedRef.current;
 
     const options = {
       componentRestrictions: { country: "th" },
       fields: ["geometry", "formatted_address"],
     };
 
-    const originAutocomplete = new placesLib.Autocomplete(originInputRef.current, options);
-    const destinationAutocomplete = new placesLib.Autocomplete(destinationInputRef.current, options);
+    const originInput = originInputRef.current;
+    if (originInput && !attached.has(originInput)) {
+      attached.add(originInput);
+      const originAutocomplete = new placesLib.Autocomplete(originInput, options);
+      originAutocomplete.addListener("place_changed", () => {
+        const place = originAutocomplete.getPlace();
+        if (place.formatted_address) setOrigin(place.formatted_address);
+      });
+    }
 
-    originAutocomplete.addListener("place_changed", () => {
-      const place = originAutocomplete.getPlace();
-      if (place.formatted_address) setOrigin(place.formatted_address);
+    destFields.forEach(f => {
+      const input = destInputRefs.current[f.id];
+      if (!input || attached.has(input)) return;
+      attached.add(input);
+      const ac = new placesLib.Autocomplete(input, options);
+      ac.addListener("place_changed", () => {
+        const place = ac.getPlace();
+        if (place.formatted_address) setDestValue(f.id, place.formatted_address);
+      });
     });
-
-    destinationAutocomplete.addListener("place_changed", () => {
-      const place = destinationAutocomplete.getPlace();
-      if (place.formatted_address) setDestination(place.formatted_address);
-    });
-  }, [placesLib]);
+  }, [placesLib, destFields, setDestValue]);
 
   const handleUseMyLocation = () => {
     if (!navigator.geolocation) {
@@ -593,20 +637,24 @@ function TripForm({
   };
 
   const handlePlanTrip = () => {
-    if (!origin || !destination) {
+    if (!origin || filledDestinations.length === 0) {
       // ห้ามเงียบ — เดิม return เฉย ๆ ทำให้ผู้ใช้กดแล้ว "ไม่มีอะไรเกิดขึ้น" โดยไม่รู้สาเหตุ
       toast({
         variant: 'destructive',
         title: 'กรอกยังไม่ครบ',
-        description: !origin ? 'กรอก "จุดเริ่มต้น" ก่อน แล้วกดคำนวณอีกครั้ง' : 'กรอก "ปลายทาง" ก่อน แล้วกดคำนวณอีกครั้ง',
+        description: !origin ? 'กรอก "จุดเริ่มต้น" ก่อน แล้วกดคำนวณอีกครั้ง' : 'กรอก "ปลายทาง" อย่างน้อย 1 จุดก่อน แล้วกดคำนวณอีกครั้ง',
       });
       return;
     }
-    setRecents(addRecent(destination)); // จำปลายทางล่าสุด
-    saveLastTrip({ origin, destination }); // จำทริปล่าสุดไว้กู้คืนตอนรีโหลด
+    // จำปลายทางล่าสุดทุกจุดที่กรอก (ลิสต์ recents ตัดซ้ำ/จำกัดจำนวนให้เอง)
+    let nextRecents = recents;
+    filledDestinations.forEach(d => { nextRecents = addRecent(d); });
+    setRecents(nextRecents);
+    saveLastTrip({ origin, destination: finalDestination, destinations: filledDestinations }); // จำทริปล่าสุดไว้กู้คืนตอนรีโหลด
     onPlanTrip({
       origin,
-      destination,
+      destination: finalDestination,
+      destinations: filledDestinations,
       fullRange,
       rangeStandard,
       epaRange: actualEpaRange,
@@ -628,7 +676,7 @@ function TripForm({
 
   // ล้างแคชสถานีแล้ววางแผนใหม่ — ใช้เมื่ออยากได้ข้อมูลปั๊มล่าสุด (เช่น มีปั๊มเปิดใหม่)
   const handleRefreshStations = () => {
-    if (!origin || !destination) return;
+    if (!origin || filledDestinations.length === 0) return;
     clearStationCache();
     handlePlanTrip();
   };
@@ -642,19 +690,23 @@ function TripForm({
   // ตั้งชื่อเริ่มต้นแบบสั้น (เอาเฉพาะส่วนแรกของที่อยู่)
   const shortPlace = (addr: string) => addr.split(',')[0].trim().slice(0, 28);
 
+  // ชื่อทริปเริ่มต้น: ต้นทาง → ปลายทางทุกจุดตามลำดับ (ตัดให้พอดีช่องชื่อ)
+  const defaultTripName = () =>
+    [shortPlace(origin), ...filledDestinations.map(shortPlace)].join(' → ').slice(0, 60);
+
   const openSaveDialog = () => {
-    if (!origin || !destination) {
+    if (!origin || filledDestinations.length === 0) {
       toast({ variant: 'destructive', title: 'บันทึกไม่ได้', description: 'กรอกจุดเริ่มต้นและปลายทางก่อน' });
       return;
     }
-    setTripName(`${shortPlace(origin)} → ${shortPlace(destination)}`);
+    setTripName(defaultTripName());
     setSaveDialogOpen(true);
   };
 
   const confirmSaveTrip = () => {
-    const name = tripName.trim() || `${shortPlace(origin)} → ${shortPlace(destination)}`;
+    const name = tripName.trim() || defaultTripName();
     setSavedTrips(saveTrip({
-      name, origin, destination, vehicleId, fullRange, rangeStandard,
+      name, origin, destination: finalDestination, destinations: filledDestinations, vehicleId, fullRange, rangeStandard,
       minBatteryThreshold, startSoc, targetCharge, searchRadius, pricingNetworkId, tariffMode, selectedNetworks,
     }));
     setSaveDialogOpen(false);
@@ -662,8 +714,9 @@ function TripForm({
   };
 
   const handleLoadTrip = (t: SavedTrip) => {
+    const tripDests = t.destinations?.length ? t.destinations : [t.destination];
     setOrigin(t.origin);
-    setDestination(t.destination);
+    setDestFields(toDestFields(tripDests));
     setVehicleId(t.vehicleId);
     setFullRange(t.fullRange);
     setRangeStandard(t.rangeStandard);
@@ -677,7 +730,8 @@ function TripForm({
     const veh = VEHICLE_MODELS.find(v => v.id === t.vehicleId) ?? VEHICLE_MODELS[0];
     onPlanTrip({
       origin: t.origin,
-      destination: t.destination,
+      destination: tripDests[tripDests.length - 1],
+      destinations: tripDests,
       fullRange: t.fullRange,
       rangeStandard: t.rangeStandard,
       epaRange: toEpaRange(t.fullRange, t.rangeStandard),
@@ -818,39 +872,68 @@ function TripForm({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 group">
-            <div className="relative flex-1">
-              <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-secondary transition-colors">
-                <Navigation className="w-4.5 h-4.5" />
+          {destFields.map((f, idx) => (
+            <div key={f.id} className="flex items-center gap-2 group">
+              <div className="relative flex-1">
+                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-secondary transition-colors">
+                  {destFields.length > 1 ? (
+                    <span className="w-4.5 h-4.5 rounded-full bg-secondary/15 text-secondary text-[10px] font-black flex items-center justify-center">{idx + 1}</span>
+                  ) : (
+                    <Navigation className="w-4.5 h-4.5" />
+                  )}
+                </div>
+                <Input
+                  ref={el => { destInputRefs.current[f.id] = el; }}
+                  placeholder={destFields.length > 1 ? `ปลายทางที่ ${idx + 1}` : 'ปลายทาง'}
+                  value={f.value}
+                  onChange={e => setDestValue(f.id, e.target.value)}
+                  className="pl-11 pr-11 h-13 rounded-2xl border-border/80 focus:ring-secondary/20 bg-background/50 text-sm font-medium transition-all"
+                />
+                <button
+                  type="button"
+                  title="ค้นหาด้วยเสียง"
+                  onClick={() => startVoice(f.id)}
+                  className={cn(
+                    "absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-colors",
+                    listening === f.id ? "text-red-500 bg-red-500/10 animate-pulse" : "text-muted-foreground hover:text-secondary hover:bg-secondary/10"
+                  )}
+                >
+                  <Mic className="w-4.5 h-4.5" />
+                </button>
               </div>
-              <Input
-                ref={destinationInputRef}
-                placeholder="ปลายทาง"
-                value={destination}
-                onChange={e => setDestination(e.target.value)}
-                className="pl-11 pr-11 h-13 rounded-2xl border-border/80 focus:ring-secondary/20 bg-background/50 text-sm font-medium transition-all"
-              />
-              <button
-                type="button"
-                title="ค้นหาด้วยเสียง"
-                onClick={() => startVoice('destination')}
-                className={cn(
-                  "absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-colors",
-                  listening === 'destination' ? "text-red-500 bg-red-500/10 animate-pulse" : "text-muted-foreground hover:text-secondary hover:bg-secondary/10"
+              <div className="flex gap-1.5 shrink-0">
+                <Button
+                  variant={isPickingOnMap === f.id ? 'default' : 'outline'}
+                  size="icon"
+                  className="h-13 w-13 rounded-2xl"
+                  onClick={() => setIsPickingOnMap(isPickingOnMap === f.id ? null : f.id)}
+                >
+                  <Crosshair className="w-5 h-5" />
+                </Button>
+                {destFields.length > 1 && (
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    title={`ลบปลายทางที่ ${idx + 1}`}
+                    className="h-13 w-9 rounded-2xl text-muted-foreground hover:text-red-500 hover:border-red-500/40"
+                    onClick={() => removeDestination(f.id)}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
                 )}
-              >
-                <Mic className="w-4.5 h-4.5" />
-              </button>
+              </div>
             </div>
-            <Button
-              variant={isPickingOnMap === 'destination' ? 'default' : 'outline'}
-              size="icon"
-              className="h-13 w-13 rounded-2xl shrink-0"
-              onClick={() => setIsPickingOnMap(isPickingOnMap === 'destination' ? null : 'destination')}
-            >
-              <Crosshair className="w-5 h-5" />
-            </Button>
-          </div>
+          ))}
+
+          {/* เพิ่มปลายทางได้เรื่อย ๆ — ทริปวิ่งผ่านทุกจุดตามลำดับ จุดสุดท้ายคือปลายทาง */}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={addDestination}
+            className="w-full h-10 rounded-2xl border-dashed gap-1.5 text-xs font-bold text-muted-foreground hover:text-secondary hover:border-secondary/40"
+          >
+            <Plus className="w-4 h-4" /> เพิ่มปลายทาง (แวะหลายจุด)
+          </Button>
 
           {/* ทางลัดใส่ปลายทาง: รายการโปรด + ปลายทางล่าสุด */}
           <div className="flex flex-wrap gap-1.5 pt-0.5">
@@ -858,7 +941,7 @@ function TripForm({
             {favorites.home ? (
               <button
                 type="button"
-                onClick={() => setDestination(favorites.home!)}
+                onClick={() => fillLastDestination(favorites.home!)}
                 title={favorites.home}
                 className="group inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1.5 rounded-xl bg-secondary/10 text-secondary text-[11px] font-bold hover:bg-secondary/20 transition-colors max-w-[48%]"
               >
@@ -875,7 +958,7 @@ function TripForm({
             {favorites.work ? (
               <button
                 type="button"
-                onClick={() => setDestination(favorites.work!)}
+                onClick={() => fillLastDestination(favorites.work!)}
                 title={favorites.work}
                 className="group inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1.5 rounded-xl bg-primary/10 text-primary text-[11px] font-bold hover:bg-primary/20 transition-colors max-w-[48%]"
               >
@@ -893,7 +976,7 @@ function TripForm({
               <button
                 key={i}
                 type="button"
-                onClick={() => setDestination(addr)}
+                onClick={() => fillLastDestination(addr)}
                 title={addr}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-muted/50 text-foreground/80 text-[11px] font-medium hover:bg-muted transition-colors max-w-[48%]"
               >
@@ -1246,7 +1329,7 @@ function TripForm({
         {isPlanning ? 'กำลังคำนวณ…' : 'คำนวณเส้นทางและจุดชาร์จ'}
       </Button>
 
-      {origin && destination && (
+      {origin && filledDestinations.length > 0 && (
         <button
           type="button"
           onClick={handleRefreshStations}
@@ -1268,8 +1351,8 @@ function MapView({
   onPlanningChange,
 }: {
   tripData: any;
-  isPickingOnMap: 'origin' | 'destination' | null;
-  setIsPickingOnMap: (val: 'origin' | 'destination' | null) => void;
+  isPickingOnMap: PickTarget;
+  setIsPickingOnMap: (val: PickTarget) => void;
   onPlanningChange?: (planning: boolean) => void;
 }) {
   const map = useMap();
@@ -1320,8 +1403,9 @@ function MapView({
   const [headingUp, setHeadingUp] = useState(false); // false = ล็อกทิศเหนือ, true = หันหัวไปด้านหน้า
   const [nearAlert, setNearAlert] = useState<{ stopNo: number; km: number } | null>(null);
   const [destinationLatLng, setDestinationLatLng] = useState<google.maps.LatLng | null>(null);
-  // จุดกลับตัวของทริปไป-กลับ (ปลายทางที่ผู้ใช้ใส่) + ระยะสะสมถึงจุดนั้น — null ถ้าเป็นทริปเที่ยวเดียว
-  const [turnaround, setTurnaround] = useState<{ location: google.maps.LatLng; atKm: number } | null>(null);
+  // ปลายทางระหว่างทาง (multi-destination) + จุดกลับตัวของทริปไป-กลับ พร้อมระยะสะสมถึงแต่ละจุด
+  // — เป็นจุด "ผ่านเฉย ๆ ไม่ชาร์จ" ที่ต้องคงไว้ตอนขอเส้นทางผ่านปั๊ม (เฟสสอง) และตอนส่งเข้า Google Maps
+  const [viaPoints, setViaPoints] = useState<{ location: google.maps.LatLng; atKm: number }[]>([]);
   const [soundOn, setSoundOn] = useState(true);
   const firedRef = useRef<{ idx: number; t5: boolean; t2: boolean }>({ idx: 0, t5: false, t2: false });
   const isDrivingRef = useRef(false);
@@ -1424,16 +1508,16 @@ function MapView({
           .map((s: any, i: number) => (s ? i : -1))
           .filter((i: number) => i >= 0);
 
-        // จุดแวะทั้งหมดตามลำดับระยะบนเส้นทาง — ปั๊ม (ชาร์จ) + จุดกลับตัว (ผ่านเฉย ๆ ไม่ชาร์จ)
+        // จุดแวะทั้งหมดตามลำดับระยะบนเส้นทาง — ปั๊ม (ชาร์จ) + ปลายทางระหว่างทาง/จุดกลับตัว (ผ่านเฉย ๆ ไม่ชาร์จ)
         const points = stations.map((s: any, k: number) => ({
           location: s.geometry.location as google.maps.LatLng,
           atKm: plannedStops[stopIdxOfStation[k]]?.atKm ?? 0,
           kind: 'station' as const,
           stopIndex: stopIdxOfStation[k],
         }));
-        if (roundTrip && turnaround) {
-          points.push({ location: turnaround.location, atKm: turnaround.atKm, kind: 'via' as any, stopIndex: -1 });
-        }
+        viaPoints.forEach(v => {
+          points.push({ location: v.location, atKm: v.atKm, kind: 'via' as any, stopIndex: -1 });
+        });
         points.sort((a, b) => a.atKm - b.atKm);
 
         const directionsService = new google.maps.DirectionsService();
@@ -1529,7 +1613,7 @@ function MapView({
     refineRoute();
     return () => { stale = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedKey, plannedStops.length, tripData, routesLib, directionsRenderer, rangeAdjust, turnaround]);
+  }, [resolvedKey, plannedStops.length, tripData, routesLib, directionsRenderer, rangeAdjust, viaPoints]);
 
   const startDriving = () => {
     setNextStopIndex(0);
@@ -1749,26 +1833,36 @@ function MapView({
       const directionsService = new google.maps.DirectionsService();
 
       try {
-        // ไป-กลับ: วิ่ง origin → destination → origin (ปลายทางเป็นจุดกลับตัว/waypoint)
+        // ปลายทางหลายจุด: วิ่งผ่านทุกจุดตามลำดับ จุดสุดท้ายคือปลายทางจริง
+        // ไป-กลับ: ทุกปลายทางกลายเป็นจุดผ่าน แล้ววนกลับ origin
+        const destList: string[] = (tripData.destinations?.length ? tripData.destinations : [destination]).filter(Boolean);
+        const midDestinations = roundTrip ? destList : destList.slice(0, -1);
         const result = await directionsService.route({
           origin,
-          destination: roundTrip ? origin : destination,
-          waypoints: roundTrip ? [{ location: destination, stopover: true }] : undefined,
+          destination: roundTrip ? origin : destList[destList.length - 1],
+          waypoints: midDestinations.length > 0
+            ? midDestinations.map(d => ({ location: d, stopover: true }))
+            : undefined,
           travelMode: google.maps.TravelMode.DRIVING,
         });
         if (seq !== planSeqRef.current) return; // มีรอบใหม่กว่าแล้ว — ทิ้งผลรอบนี้
 
         directionsRenderer.setDirections(result);
         const legs = result.routes[0].legs;
-        // รวมระยะ/เวลาทุกเลก (ไป-กลับมี 2 เลก) — จุดกลับตัวคือปลายเลกแรก
+        // รวมระยะ/เวลาทุกเลก (ปลายทางระหว่างทาง/ไป-กลับทำให้มีหลายเลก)
         const totalDistM = legs.reduce((a, l) => a + (l.distance?.value || 0), 0);
         const totalDurS = legs.reduce((a, l) => a + (l.duration?.value || 0), 0);
         const startLoc = legs[0].start_location;
         const endLoc = legs[legs.length - 1].end_location;
         setDestinationLatLng(endLoc);
-        setTurnaround(roundTrip
-          ? { location: legs[0].end_location, atKm: Math.round((legs[0].distance?.value || 0) / 1000) }
-          : null);
+        // ปลายทางระหว่างทางทุกจุด = ปลายเลกที่ไม่ใช่เลกสุดท้าย พร้อมระยะสะสมถึงจุดนั้น
+        const vias: { location: google.maps.LatLng; atKm: number }[] = [];
+        let cumKm = 0;
+        for (let li = 0; li < legs.length - 1; li++) {
+          cumKm += (legs[li].distance?.value || 0) / 1000;
+          vias.push({ location: legs[li].end_location, atKm: Math.round(cumKm) });
+        }
+        setViaPoints(vias);
 
         setRouteInfo({
           distance: `${Math.round(totalDistM / 1000)} กม.${roundTrip ? ' (ไป-กลับ)' : ''}`,
@@ -1935,7 +2029,7 @@ function MapView({
           const bounds = new google.maps.LatLngBounds();
           bounds.extend(startLoc);
           bounds.extend(endLoc);
-          if (roundTrip) bounds.extend(legs[0].end_location); // จุดกลับตัว
+          vias.forEach(v => bounds.extend(v.location)); // ปลายทางระหว่างทาง/จุดกลับตัว
           stops.forEach(s => bounds.extend(s.location));
           map?.fitBounds(bounds, 80);
         }
@@ -2033,19 +2127,20 @@ function MapView({
     const dirs = directionsRenderer.getDirections();
     if (!dirs) return;
 
-    const route = dirs.routes[0].legs[0];
-    const originStr = encodeURIComponent(route.start_address);
-    const destinationStr = encodeURIComponent(route.end_address);
+    // เส้นทางอาจมีหลายเลก (ปลายทางระหว่างทาง/ปั๊ม) — ต้นทาง = เลกแรก, ปลายทางจริง = เลกสุดท้าย
+    const legs = dirs.routes[0].legs;
+    const originStr = encodeURIComponent(legs[0].start_address);
+    const destinationStr = encodeURIComponent(legs[legs.length - 1].end_address);
 
     let url = `https://www.google.com/maps/dir/?api=1&origin=${originStr}&destination=${destinationStr}`;
 
-    // รวมปั๊มที่เลือก + จุดกลับตัว (ทริปไป-กลับ) เรียงตามระยะบนเส้นทาง เป็น waypoints
+    // รวมปั๊มที่เลือก + ปลายทางระหว่างทาง/จุดกลับตัว เรียงตามระยะบนเส้นทาง เป็น waypoints
     const wp: { lat: number; lng: number; atKm: number }[] = resolvedStops
       .map((s: any, i: number) => (s ? { lat: s.geometry.location.lat(), lng: s.geometry.location.lng(), atKm: plannedStops[i]?.atKm ?? 0 } : null))
       .filter(Boolean) as { lat: number; lng: number; atKm: number }[];
-    if (tripData?.roundTrip && turnaround) {
-      wp.push({ lat: turnaround.location.lat(), lng: turnaround.location.lng(), atKm: turnaround.atKm });
-    }
+    viaPoints.forEach(v => {
+      wp.push({ lat: v.location.lat(), lng: v.location.lng(), atKm: v.atKm });
+    });
     wp.sort((a, b) => a.atKm - b.atKm);
     const waypoints = wp.map(p => `${p.lat},${p.lng}`);
     if (waypoints.length > 0) {
@@ -2087,11 +2182,17 @@ function MapView({
 
   // สร้างข้อความสรุปทริปสำหรับแชร์/คัดลอก
   const buildSummary = () => {
+    const destNames: string[] = tripData?.destinations?.length ? tripData.destinations : [tripData?.destination ?? '-'];
     const lines = [
       '🚗 แผนเดินทาง EV — ChargeWay',
       `📍 จาก: ${tripData?.origin ?? '-'}`,
-      `🏁 ${tripData?.roundTrip ? 'ไป-กลับ' : 'ถึง'}: ${tripData?.destination ?? '-'}`,
     ];
+    if (destNames.length === 1) {
+      lines.push(`🏁 ${tripData?.roundTrip ? 'ไป-กลับ' : 'ถึง'}: ${destNames[0]}`);
+    } else {
+      destNames.forEach((d, i) => lines.push(`🏁 ปลายทางที่ ${i + 1}: ${d}`));
+      if (tripData?.roundTrip) lines.push('🔁 ไป-กลับ (วนกลับจุดเริ่มต้น)');
+    }
     if (tripData?.vehicleName) lines.push(`🔋 รถ: ${tripData.vehicleName}`);
     if (routeInfo) lines.push(`🛣️ ระยะทาง: ${routeInfo.distance} · เวลาขับ ~${routeInfo.duration}`);
     if (rangeAdjust) lines.push(`🌡️ ระยะวิ่งปรับแล้ว ~${rangeAdjust.effRange} กม. (EPA ${rangeAdjust.baseRange} · ${rangeAdjust.tempC}°C · ${rangeAdjust.avgKmh} กม./ชม.)`);

@@ -5,6 +5,8 @@
 export interface LastTrip {
   origin: string;
   destination: string;
+  // ปลายทางทั้งหมดตามลำดับ (รองรับหลายจุด) — destination คงไว้เป็นจุดสุดท้ายเพื่อเข้ากับข้อมูลเก่า
+  destinations?: string[];
 }
 
 const KEY = 'chargeway_last_trip';
@@ -27,7 +29,14 @@ export function loadLastTrip(now: number = Date.now()): LastTrip | null {
     const p = JSON.parse(raw);
     if (!p || !p.origin || !p.destination || typeof p.ts !== 'number') return null;
     if (now - p.ts > TTL_MS) return null;
-    return { origin: p.origin, destination: p.destination };
+    const destinations = Array.isArray(p.destinations)
+      ? p.destinations.filter((d: unknown): d is string => typeof d === 'string' && d.length > 0)
+      : undefined;
+    return {
+      origin: p.origin,
+      destination: p.destination,
+      ...(destinations && destinations.length > 0 ? { destinations } : {}),
+    };
   } catch {
     return null;
   }
