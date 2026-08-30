@@ -96,7 +96,7 @@ import {
 import { planStopIndices, kmUntilNextCharge } from '@/lib/plan-stops';
 import { loadPrefs, savePrefs } from '@/lib/prefs';
 import { readStationCache, writeStationCache, clearStationCache, type CachedStation } from '@/lib/station-cache';
-import { saveLastTrip, loadLastTrip } from '@/lib/last-trip';
+import { saveLastTrip, loadLastTrip, clearLastTrip } from '@/lib/last-trip';
 import * as Sentry from '@sentry/nextjs';
 import { type SavedTrip, loadTrips, saveTrip, deleteTrip } from '@/lib/trips';
 import { type Favorites, type FavKind, loadRecents, addRecent, loadFavorites, setFavorite, clearFavorite } from '@/lib/places';
@@ -361,6 +361,17 @@ const newDestId = () => `dest-${++destIdSeq}`;
 const toDestFields = (dests: string[]): DestField[] =>
   (dests.length > 0 ? dests : ['']).map(v => ({ id: newDestId(), value: v }));
 
+// ข้อความในช่องจากผลลัพธ์ Autocomplete: ขึ้นต้นด้วย "ชื่อสถานที่" แล้วตามด้วยที่อยู่
+// (ที่อยู่อย่างเดียวอ่านแล้วไม่รู้ว่าเป็นที่ไหน — ชื่อนำหน้าทำให้ชิป/ชื่อทริปที่ตัดสั้นแสดงชื่อสถานที่)
+function placeLabel(place: google.maps.places.PlaceResult): string {
+  const name = place.name?.trim();
+  const addr = place.formatted_address?.trim();
+  if (name && addr) {
+    return addr.toLowerCase().includes(name.toLowerCase()) ? addr : `${name}, ${addr}`;
+  }
+  return name || addr || '';
+}
+
 function TripForm({
   onPlanTrip,
   isPickingOnMap,
@@ -560,7 +571,7 @@ function TripForm({
 
     const options = {
       componentRestrictions: { country: "th" },
-      fields: ["geometry", "formatted_address"],
+      fields: ["geometry", "formatted_address", "name"],
     };
 
     const originInput = originInputRef.current;
@@ -568,8 +579,8 @@ function TripForm({
       attached.add(originInput);
       const originAutocomplete = new placesLib.Autocomplete(originInput, options);
       originAutocomplete.addListener("place_changed", () => {
-        const place = originAutocomplete.getPlace();
-        if (place.formatted_address) setOrigin(place.formatted_address);
+        const label = placeLabel(originAutocomplete.getPlace());
+        if (label) setOrigin(label);
       });
     }
 
@@ -579,8 +590,8 @@ function TripForm({
       attached.add(input);
       const ac = new placesLib.Autocomplete(input, options);
       ac.addListener("place_changed", () => {
-        const place = ac.getPlace();
-        if (place.formatted_address) setDestValue(f.id, place.formatted_address);
+        const label = placeLabel(ac.getPlace());
+        if (label) setDestValue(f.id, label);
       });
     });
   }, [placesLib, destFields, setDestValue]);
@@ -673,6 +684,16 @@ function TripForm({
     if (!origin || filledDestinations.length === 0) return;
     clearStationCache();
     handlePlanTrip();
+  };
+
+  // ล้างรายการเส้นทางทั้งหมด: ต้นทาง + ปลายทางทุกช่อง + แผนบนแผนที่ + ทริปล่าสุดที่จำไว้
+  const handleClearRoute = () => {
+    setOrigin('');
+    setDestFields([{ id: newDestId(), value: '' }]);
+    setIsPickingOnMap(null);
+    clearLastTrip(); // กันรีโหลดแล้วทริปเดิมเด้งกลับมา
+    onPlanTrip(null);
+    toast({ title: 'ล้างรายการแล้ว', description: 'กรอกต้นทางและปลายทางใหม่ได้เลย' });
   };
 
   // ===== บันทึก/โหลดทริป =====
@@ -815,11 +836,22 @@ function TripForm({
       </section>
 
       <section className="space-y-4">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-1.5 h-4 bg-primary rounded-full" />
-          <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground">เส้นทางเดินทาง</h2>
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-1.5 h-4 bg-primary rounded-full shrink-0" />
+            <h2 className="text-xs font-black uppercase tracking-[0.15em] text-muted-foreground truncate">เส้นทางเดินทาง</h2>
+          </div>
+          {(origin || filledDestinations.length > 0 || destFields.length > 1) && (
+            <button
+              type="button"
+              onClick={handleClearRoute}
+              className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> ล้างรายการ
+            </button>
+          )}
         </div>
-        
+
         <div className="space-y-3">
           <div className="flex items-center gap-2 group">
             <div className="relative flex-1">
@@ -1393,6 +1425,8 @@ function MapView({
   // ปลายทางระหว่างทาง (multi-destination) + จุดกลับตัวของทริปไป-กลับ พร้อมระยะสะสมถึงแต่ละจุด
   // — เป็นจุด "ผ่านเฉย ๆ ไม่ชาร์จ" ที่ต้องคงไว้ตอนขอเส้นทางผ่านปั๊ม (เฟสสอง) และตอนส่งเข้า Google Maps
   const [viaPoints, setViaPoints] = useState<{ location: google.maps.LatLng; atKm: number }[]>([]);
+  // หมุดต้นทาง/ปลายทางบนแผนที่ (แทนหมุด A/B ของ Google) — ปลายทางเรียงเป็นตัวเลข 1, 2, 3…
+  const [routeMarkers, setRouteMarkers] = useState<{ location: google.maps.LatLng; label: string; isOrigin?: boolean }[]>([]);
 
   // ปั๊มที่จะใช้จริงของแต่ละจุด: ที่เลือกเอง หรือเลือกอัตโนมัติให้
   const resolvedStops: (any | null)[] = plannedStops.map((stop: any, i: number) =>
@@ -1589,9 +1623,10 @@ function MapView({
 
   useEffect(() => {
     if (!routesLib || !map) return;
-    const renderer = new google.maps.DirectionsRenderer({ 
-      map, 
-      suppressMarkers: false,
+    const renderer = new google.maps.DirectionsRenderer({
+      map,
+      // ปิดหมุด A/B/C ของ Google — วาดหมุดตัวเลขตามลำดับปลายทางเองแทน (routeMarkers)
+      suppressMarkers: true,
       polylineOptions: {
         strokeColor: '#4080BF',
         strokeWeight: 6,
@@ -1601,6 +1636,28 @@ function MapView({
     setDirectionsRenderer(renderer);
     return () => renderer.setMap(null);
   }, [routesLib, map]);
+
+  // ผู้ใช้กด "ล้างรายการ" (tripData = null) → เคลียร์เส้นทางและผลลัพธ์ทั้งหมดออกจากแผนที่
+  useEffect(() => {
+    if (tripData) return;
+    planSeqRef.current++; // ทิ้งผลของรอบคำนวณที่อาจยังค้างอยู่
+    planForTripRef.current = null;
+    try { directionsRenderer?.set('directions', null); } catch { /* ignore */ }
+    setStations([]);
+    setPlannedStops([]);
+    setSelectedStation(null);
+    setSelectedStops([]);
+    setExpandedStop(null);
+    setRouteInfo(null);
+    setChargeStats(null);
+    setTripEta(null);
+    setRangeAdjust(null);
+    setViaPoints([]);
+    setRouteMarkers([]);
+    setIsLoading(false);
+    onPlanningChange?.(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripData, directionsRenderer]);
 
   const handleMapClick = useCallback((e: MapMouseEvent) => {
     if (!isPickingOnMap || !e.detail.latLng || !geocodingLib) return;
@@ -1749,6 +1806,17 @@ function MapView({
           vias.push({ location: legs[li].end_location, atKm: Math.round(cumKm) });
         }
         setViaPoints(vias);
+
+        // หมุดต้นทาง + ปลายทางตามลำดับที่ผู้ใช้กรอก (ปลายเลกที่ k = ปลายทางที่ k+1)
+        // ทริปไป-กลับ: เลกสุดท้ายกลับมาที่ต้นทาง จึงไม่ปักหมุดซ้ำ
+        const destMarkerCount = roundTrip ? legs.length - 1 : legs.length;
+        setRouteMarkers([
+          { location: startLoc, label: 'เริ่ม', isOrigin: true },
+          ...Array.from({ length: destMarkerCount }, (_, k) => ({
+            location: legs[k].end_location,
+            label: destMarkerCount > 1 ? `${k + 1}` : 'ปลายทาง',
+          })),
+        ]);
 
         setRouteInfo({
           distance: `${Math.round(totalDistM / 1000)} กม.${roundTrip ? ' (ไป-กลับ)' : ''}`,
@@ -2056,6 +2124,27 @@ function MapView({
           className="w-full h-full"
           onClick={handleMapClick}
         >
+          {/* หมุดต้นทาง/ปลายทาง — ปลายทางหลายจุดแสดงเป็นตัวเลขตามลำดับ (แทน A/B ของ Google) */}
+          {routeMarkers.map((m, i) => (
+            <AdvancedMarker key={`route-${i}`} position={m.location} zIndex={30}>
+              {m.isOrigin ? (
+                <div className="bg-green-600 text-white px-2.5 py-1 rounded-full shadow-xl border-2 border-white flex items-center gap-1">
+                  <MapPin className="w-3.5 h-3.5 fill-white" />
+                  <span className="text-[10px] font-black">{m.label}</span>
+                </div>
+              ) : /^\d+$/.test(m.label) ? (
+                <div className="w-8 h-8 rounded-full bg-red-600 text-white border-2 border-white shadow-xl flex items-center justify-center text-sm font-black">
+                  {m.label}
+                </div>
+              ) : (
+                <div className="bg-red-600 text-white px-2.5 py-1 rounded-full shadow-xl border-2 border-white flex items-center gap-1">
+                  <Navigation className="w-3.5 h-3.5 fill-white" />
+                  <span className="text-[10px] font-black">{m.label}</span>
+                </div>
+              )}
+            </AdvancedMarker>
+          ))}
+
           {plannedStops.map((stop, i) => (
             <AdvancedMarker key={`stop-${i}`} position={stop.location} zIndex={10}>
               <div className="bg-secondary text-white px-3 py-1.5 rounded-2xl shadow-2xl border-2 border-white flex flex-col items-center animate-bounce">
