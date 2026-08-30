@@ -67,15 +67,11 @@ import {
   Copy,
   Check,
   X,
-  Volume2,
-  VolumeX,
-  Gauge as GaugeIcon,
   ChevronDown,
   Mic,
   Home,
   Briefcase,
   Clock,
-  Compass,
   Thermometer,
   Smartphone,
   Repeat,
@@ -105,8 +101,6 @@ import * as Sentry from '@sentry/nextjs';
 import { type SavedTrip, loadTrips, saveTrip, deleteTrip } from '@/lib/trips';
 import { type Favorites, type FavKind, loadRecents, addRecent, loadFavorites, setFavorite, clearFavorite } from '@/lib/places';
 import { speedRangeFactor, tempRangeFactor, fetchTemperature, chargeMinutes } from '@/lib/range-model';
-import { useGeoWatch } from '@/hooks/use-geo-watch';
-import { useWakeLock } from '@/hooks/use-wake-lock';
 import { cn } from '@/lib/utils';
 
 // ตั้งค่า NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ใน .env.local / Vercel (ดู README + .env.example)
@@ -1396,98 +1390,14 @@ function MapView({
   // กรองสถานีให้เหลือเฉพาะฝั่งเดียวกับทิศทางเดินทาง (สลับดูทั้งหมดได้)
   const [showAllSides, setShowAllSides] = useState(false);
 
-  // ===== โหมดขับขี่สด (Live Driving Mode) =====
-  const [isDriving, setIsDriving] = useState(false);
-  const [nextStopIndex, setNextStopIndex] = useState(0);
-  const [followCamera, setFollowCamera] = useState(true);
-  const [headingUp, setHeadingUp] = useState(false); // false = ล็อกทิศเหนือ, true = หันหัวไปด้านหน้า
-  const [nearAlert, setNearAlert] = useState<{ stopNo: number; km: number } | null>(null);
-  const [destinationLatLng, setDestinationLatLng] = useState<google.maps.LatLng | null>(null);
   // ปลายทางระหว่างทาง (multi-destination) + จุดกลับตัวของทริปไป-กลับ พร้อมระยะสะสมถึงแต่ละจุด
   // — เป็นจุด "ผ่านเฉย ๆ ไม่ชาร์จ" ที่ต้องคงไว้ตอนขอเส้นทางผ่านปั๊ม (เฟสสอง) และตอนส่งเข้า Google Maps
   const [viaPoints, setViaPoints] = useState<{ location: google.maps.LatLng; atKm: number }[]>([]);
-  const [soundOn, setSoundOn] = useState(true);
-  const firedRef = useRef<{ idx: number; t5: boolean; t2: boolean }>({ idx: 0, t5: false, t2: false });
-  const isDrivingRef = useRef(false);
-  const audioRef = useRef<AudioContext | null>(null);
-  useEffect(() => { isDrivingRef.current = isDriving; }, [isDriving]);
-
-  const geo = useGeoWatch(isDriving);
-  const wake = useWakeLock(isDriving);
-
-  // เสียงเตือนสั้น ๆ (Web Audio) — สร้าง context ตอนกดเริ่มขับ (เป็น user gesture)
-  const beep = useCallback((freq = 880, ms = 180) => {
-    if (!soundOn) return;
-    try {
-      const ctx = audioRef.current;
-      if (!ctx) return;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.frequency.value = freq;
-      osc.type = 'sine';
-      gain.gain.setValueAtTime(0.001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + ms / 1000);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + ms / 1000);
-    } catch {
-      /* ignore */
-    }
-  }, [soundOn]);
-
-  // เสียงพูดภาษาไทย (Web Speech API)
-  const thVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
-  const speak = useCallback((text: string) => {
-    if (!soundOn) return;
-    try {
-      const synth = window.speechSynthesis;
-      if (!synth) return;
-      synth.cancel(); // ตัดข้อความเก่าที่ค้างอยู่ พูดอันล่าสุดทันที
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'th-TH';
-      u.rate = 1; u.pitch = 1; u.volume = 1;
-      const voice = thVoiceRef.current
-        ?? synth.getVoices().find(v => v.lang?.toLowerCase().startsWith('th'))
-        ?? null;
-      if (voice) { thVoiceRef.current = voice; u.voice = voice; }
-      synth.speak(u);
-    } catch {
-      /* ignore */
-    }
-  }, [soundOn]);
-
-  // โหลดรายชื่อเสียงไว้ล่วงหน้า (บางเบราว์เซอร์โหลดแบบ async)
-  useEffect(() => {
-    const synth = window.speechSynthesis;
-    if (!synth) return;
-    const load = () => {
-      const v = synth.getVoices().find(vv => vv.lang?.toLowerCase().startsWith('th'));
-      if (v) thVoiceRef.current = v;
-    };
-    load();
-    synth.addEventListener?.('voiceschanged', load);
-    return () => synth.removeEventListener?.('voiceschanged', load);
-  }, []);
-
-  // เตือน: ปี๊บนำ 1 จังหวะ แล้วพูดข้อความไทยตาม
-  const announce = useCallback((freq: number, text: string) => {
-    beep(freq);
-    setTimeout(() => speak(text), 220);
-  }, [beep, speak]);
 
   // ปั๊มที่จะใช้จริงของแต่ละจุด: ที่เลือกเอง หรือเลือกอัตโนมัติให้
   const resolvedStops: (any | null)[] = plannedStops.map((stop: any, i: number) =>
     selectedStops[i] ?? pickBestStation(stop.candidates)
   );
-
-  // รายการเป้าหมายตามลำดับ: ตำแหน่งปั๊มจริงของแต่ละจุด (ปั๊มอาจห่างจากแนวเส้นทางได้หลาย กม.
-  // ถ้าใช้จุดบนเส้นทางจะเตือน "ถึงจุดชาร์จ" กลางถนน) + ปลายทางเป็นเป้าสุดท้าย
-  const driveTargets: google.maps.LatLng[] = [
-    ...plannedStops.map((s: any, i: number) => resolvedStops[i]?.geometry?.location ?? s.location),
-    ...(destinationLatLng ? [destinationLatLng] : []),
-  ];
 
   // ===== เฟสสอง: เส้นทางจริงผ่านปั๊มที่เลือก (waypoints) =====
   // เส้นทางเฟสแรกเป็นเส้นตรงต้นทาง→ปลายทาง ไม่รวมระยะอ้อมเข้าปั๊ม — พอรู้ปั๊มจริงแล้ว
@@ -1617,32 +1527,6 @@ function MapView({
     return () => { stale = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolvedKey, plannedStops.length, tripData, routesLib, directionsRenderer, rangeAdjust, viaPoints]);
-
-  const startDriving = () => {
-    setNextStopIndex(0);
-    setFollowCamera(true);
-    setNearAlert(null);
-    firedRef.current = { idx: 0, t5: false, t2: false };
-    // เปิด AudioContext ตอนนี้ (อยู่ใน user gesture) เพื่อให้เสียงเตือนเล่นได้
-    try {
-      if (!audioRef.current) {
-        const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
-        if (AC) audioRef.current = new AC();
-      }
-      audioRef.current?.resume?.();
-    } catch { /* ignore */ }
-    // ปลุก TTS ภายใน user gesture (จำเป็นบน iOS) + พูดทักทายเริ่มนำทาง
-    speak('เริ่มโหมดขับขี่ ขับขี่ปลอดภัยนะครับ');
-    setIsDriving(true);
-    map?.setZoom(16);
-  };
-
-  const stopDriving = () => {
-    setIsDriving(false);
-    setNearAlert(null);
-    try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
-    try { map?.setHeading?.(0); } catch { /* ignore */ }
-  };
 
   // สถานีที่จะแสดง: ค่าเริ่มต้นเฉพาะฝั่งเดียวกับทิศทางขับ (เผื่อไม่มีข้อมูลฝั่งก็แสดง)
   const visibleStations = showAllSides
@@ -1857,7 +1741,6 @@ function MapView({
         const totalDurS = legs.reduce((a, l) => a + (l.duration?.value || 0), 0);
         const startLoc = legs[0].start_location;
         const endLoc = legs[legs.length - 1].end_location;
-        setDestinationLatLng(endLoc);
         // ปลายทางระหว่างทางทุกจุด = ปลายเลกที่ไม่ใช่เลกสุดท้าย พร้อมระยะสะสมถึงจุดนั้น
         const vias: { location: google.maps.LatLng; atKm: number }[] = [];
         let cumKm = 0;
@@ -2028,14 +1911,12 @@ function MapView({
         setPlannedStops(stops);
         setSelectedStops(stops.map(() => null)); // เริ่มต้นทุกจุด = อัตโนมัติ
         
-        if (!isDrivingRef.current) {
-          const bounds = new google.maps.LatLngBounds();
-          bounds.extend(startLoc);
-          bounds.extend(endLoc);
-          vias.forEach(v => bounds.extend(v.location)); // ปลายทางระหว่างทาง/จุดกลับตัว
-          stops.forEach(s => bounds.extend(s.location));
-          map?.fitBounds(bounds, 80);
-        }
+        const bounds = new google.maps.LatLngBounds();
+        bounds.extend(startLoc);
+        bounds.extend(endLoc);
+        vias.forEach(v => bounds.extend(v.location)); // ปลายทางระหว่างทาง/จุดกลับตัว
+        stops.forEach(s => bounds.extend(s.location));
+        map?.fitBounds(bounds, 80);
 
       } catch (err) {
         console.error("Route planning failed", err);
@@ -2055,75 +1936,6 @@ function MapView({
 
     calculateRoute();
   }, [tripData, routesLib, directionsRenderer, searchStationsAtLocation, map]);
-
-  // กล้องเลื่อนตามรถขณะขับ — North-up หรือ heading-up (หมุนตามทิศที่วิ่ง)
-  useEffect(() => {
-    if (isDriving && followCamera && geo.ready && map) {
-      map.panTo({ lat: geo.lat, lng: geo.lng });
-      // หมุนแผนที่ให้ทิศที่วิ่งชี้ขึ้น เฉพาะตอนเคลื่อนที่ (กันหมุนมั่วตอนจอด/ทิศแกว่ง)
-      if (headingUp && geo.heading != null && (geo.speed ?? 0) > 3) {
-        try { map.setHeading?.(geo.heading); } catch { /* ignore */ }
-      }
-    }
-  }, [geo.lat, geo.lng, geo.heading, geo.speed, geo.ready, isDriving, followCamera, headingUp, map]);
-
-  // กลับทิศเหนือเมื่อปิด heading-up
-  useEffect(() => {
-    if (!headingUp && map) { try { map.setHeading?.(0); } catch { /* ignore */ } }
-  }, [headingUp, map]);
-
-  // ผู้ใช้ลากแผนที่เอง → ปิดการเลื่อนตาม (มีปุ่ม "กลับไปที่รถ" ให้กดเปิดใหม่)
-  useEffect(() => {
-    if (!isDriving || !map) return;
-    const listener = map.addListener('dragstart', () => setFollowCamera(false));
-    return () => listener.remove();
-  }, [isDriving, map]);
-
-  // ตรวจระยะถึงเป้าหมายถัดไป: เตือนล่วงหน้า 5/2 กม. และเด้งเมื่อถึง (400 ม.)
-  useEffect(() => {
-    if (!isDriving || !geo.ready || nextStopIndex >= driveTargets.length) return;
-    const geom = (window as any).google?.maps?.geometry?.spherical;
-    if (!geom) return;
-
-    const car = new google.maps.LatLng(geo.lat, geo.lng);
-    const target = driveTargets[nextStopIndex];
-    const meters = geom.computeDistanceBetween(car, target);
-    const isChargingStop = nextStopIndex < plannedStops.length;
-
-    if (isChargingStop) {
-      if (firedRef.current.idx !== nextStopIndex) {
-        firedRef.current = { idx: nextStopIndex, t5: false, t2: false };
-      }
-      if (meters <= 5000 && !firedRef.current.t5) {
-        firedRef.current.t5 = true;
-        announce(880, `อีกประมาณ 5 กิโลเมตร ถึงจุดชาร์จที่ ${nextStopIndex + 1}`);
-        toast({ title: `ใกล้ถึงจุดชาร์จที่ ${nextStopIndex + 1}`, description: 'อีกประมาณ 5 กม.' });
-      }
-      if (meters <= 2000 && !firedRef.current.t2) {
-        firedRef.current.t2 = true;
-        announce(1100, `อีกประมาณ 2 กิโลเมตร เตรียมเข้าจุดชาร์จที่ ${nextStopIndex + 1}`);
-        toast({ title: `ใกล้ถึงจุดชาร์จที่ ${nextStopIndex + 1} แล้ว!`, description: 'อีกประมาณ 2 กม.' });
-      }
-      setNearAlert(meters <= 5000 ? { stopNo: nextStopIndex + 1, km: Math.max(0.1, meters / 1000) } : null);
-    }
-
-    // นับว่า "ถึง" เมื่อใกล้มาก (150 ม.) หรือใกล้พอและชะลอแล้ว (400 ม. + ต่ำกว่า 40 กม./ชม.)
-    // — กันเคสวิ่งผ่านปั๊มบนถนนใหญ่ด้วยความเร็วเต็มแล้วระบบเข้าใจว่าแวะแล้ว
-    const currentSpeed = geo.speed ?? 0;
-    if (meters <= 150 || (meters <= 400 && currentSpeed < 40)) {
-      if (isChargingStop) {
-        announce(988, `ถึงจุดชาร์จที่ ${nextStopIndex + 1} แล้ว พร้อมชาร์จได้เลย`);
-        toast({ title: `ถึงจุดแวะที่ ${nextStopIndex + 1} แล้ว`, description: 'พร้อมชาร์จได้เลย' });
-        setNextStopIndex(i => i + 1);
-        setNearAlert(null);
-      } else {
-        announce(988, 'ถึงปลายทางแล้ว เดินทางปลอดภัยนะครับ');
-        toast({ title: 'ถึงปลายทางแล้ว 🎉', description: 'เดินทางปลอดภัยนะครับ' });
-        stopDriving();
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geo.lat, geo.lng, geo.ready, isDriving, nextStopIndex]);
 
   const openInGoogleMaps = () => {
     if (!directionsRenderer) return;
@@ -2235,11 +2047,7 @@ function MapView({
 
   return (
     <>
-      <div className={cn(
-        isDriving
-          ? "fixed inset-0 z-50 w-screen h-[100dvh]"
-          : "relative w-full h-[50vh] lg:h-full shrink-0"
-      )}>
+      <div className="relative w-full h-[50vh] lg:h-full shrink-0">
         <Map
           mapId="charge_way_v5"
           defaultCenter={{ lat: 13.7367, lng: 100.5231 }}
@@ -2248,39 +2056,15 @@ function MapView({
           className="w-full h-full"
           onClick={handleMapClick}
         >
-          {plannedStops.map((stop, i) => {
-            const passed = isDriving && i < nextStopIndex;
-            const upcoming = isDriving && i === nextStopIndex;
-            return (
-              <AdvancedMarker key={`stop-${i}`} position={stop.location} zIndex={upcoming ? 40 : 10}>
-                <div
-                  className={cn(
-                    "bg-secondary text-white px-3 py-1.5 rounded-2xl shadow-2xl border-2 border-white flex flex-col items-center transition-all",
-                    passed ? "opacity-40" : "animate-bounce",
-                    upcoming && "scale-110 ring-4 ring-blue-400/50"
-                  )}
-                >
-                  <Zap className="w-4 h-4 fill-white" />
-                  <span className="text-[9px] font-black uppercase tracking-wider">จุดแวะที่ {i + 1} ({stop.atKm} กม.)</span>
-                  {stop.etaTs && <span className="text-[8px] font-bold opacity-90">~{formatClock(stop.etaTs)}</span>}
-                </div>
-              </AdvancedMarker>
-            );
-          })}
-
-          {isDriving && geo.ready && (
-            <AdvancedMarker position={{ lat: geo.lat, lng: geo.lng }} zIndex={100}>
-              <div className="relative w-9 h-9">
-                <span className="absolute inset-0 rounded-full bg-blue-500/30 animate-ping" />
-                <div
-                  className="relative w-9 h-9 rounded-full bg-blue-600 border-2 border-white shadow-xl flex items-center justify-center"
-                  style={{ transform: `rotate(${headingUp ? 0 : (geo.heading ?? 0)}deg)` }}
-                >
-                  <Navigation className="w-4 h-4 text-white fill-white" />
-                </div>
+          {plannedStops.map((stop, i) => (
+            <AdvancedMarker key={`stop-${i}`} position={stop.location} zIndex={10}>
+              <div className="bg-secondary text-white px-3 py-1.5 rounded-2xl shadow-2xl border-2 border-white flex flex-col items-center animate-bounce">
+                <Zap className="w-4 h-4 fill-white" />
+                <span className="text-[9px] font-black uppercase tracking-wider">จุดแวะที่ {i + 1} ({stop.atKm} กม.)</span>
+                {stop.etaTs && <span className="text-[8px] font-bold opacity-90">~{formatClock(stop.etaTs)}</span>}
               </div>
             </AdvancedMarker>
-          )}
+          ))}
 
           {visibleStations.map((station, i) => {
             const net = matchStationNetwork(station.name) ?? UNKNOWN_NETWORK;
@@ -2412,114 +2196,6 @@ function MapView({
           </div>
         )}
 
-        {isDriving && (
-          <div className="absolute inset-0 z-30 pointer-events-none p-3 flex flex-col justify-between">
-            {/* แถบสถานะบน */}
-            <div className="flex items-start justify-between gap-2">
-              <div className="pointer-events-auto bg-white/90 dark:bg-card/90 backdrop-blur-md rounded-full shadow-lg border border-border/40 px-3 py-1.5 flex items-center gap-2">
-                {geo.error === 'denied' || (!geo.ready && geo.error) ? (
-                  <span className="text-[11px] font-black text-red-500">ไม่พบสัญญาณ GPS</span>
-                ) : !geo.ready ? (
-                  <span className="text-[11px] font-black text-amber-500">รอสัญญาณ GPS…</span>
-                ) : (
-                  <>
-                    <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
-                    <span className="text-[11px] font-black text-foreground/80">ขับอยู่</span>
-                  </>
-                )}
-                {!wake.supported && (
-                  <span className="text-[9px] font-bold text-muted-foreground">(หน้าจออาจดับ)</span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  onClick={() => setHeadingUp(v => !v)}
-                  variant="outline"
-                  size="icon"
-                  title={headingUp ? 'มุมมอง: หันหัวไปด้านหน้า (กดเพื่อล็อกทิศเหนือ)' : 'มุมมอง: ล็อกทิศเหนือ (กดเพื่อหันหัวไปด้านหน้า)'}
-                  className={cn(
-                    "pointer-events-auto h-11 w-11 rounded-2xl backdrop-blur-md shadow-lg shrink-0",
-                    headingUp ? "bg-primary text-white" : "bg-white/90 dark:bg-card/90"
-                  )}
-                >
-                  {headingUp ? <Navigation className="w-4 h-4 fill-white" /> : <Compass className="w-4 h-4 text-primary" />}
-                </Button>
-                <Button
-                  onClick={() => setSoundOn(v => { if (v) { try { window.speechSynthesis?.cancel(); } catch { /* ignore */ } } return !v; })}
-                  variant="outline"
-                  size="icon"
-                  title={soundOn ? 'ปิดเสียงเตือน' : 'เปิดเสียงเตือน'}
-                  className="pointer-events-auto h-11 w-11 rounded-2xl bg-white/90 dark:bg-card/90 backdrop-blur-md shadow-lg shrink-0"
-                >
-                  {soundOn ? <Volume2 className="w-4 h-4 text-primary" /> : <VolumeX className="w-4 h-4 text-muted-foreground" />}
-                </Button>
-                <Button
-                  onClick={stopDriving}
-                  variant="outline"
-                  className="pointer-events-auto h-11 rounded-2xl font-black gap-1.5 bg-white/90 dark:bg-card/90 backdrop-blur-md shadow-lg"
-                >
-                  <X className="w-4 h-4" /> ออกจากโหมดขับ
-                </Button>
-              </div>
-            </div>
-
-            {/* การ์ดล่าง: จุดถัดไป + ระยะ + เตือน */}
-            <div className="flex flex-col items-center gap-2">
-              {nearAlert && (
-                <div className="pointer-events-auto bg-amber-500 text-white px-4 py-2 rounded-2xl shadow-xl font-black text-sm flex items-center gap-2 animate-in slide-in-from-bottom-2">
-                  <Zap className="w-4 h-4 fill-white" />
-                  ใกล้ถึงจุดชาร์จที่ {nearAlert.stopNo} — อีก {nearAlert.km.toFixed(1)} กม.
-                </div>
-              )}
-              {!followCamera && (
-                <Button
-                  onClick={() => { setFollowCamera(true); if (geo.ready) map?.panTo({ lat: geo.lat, lng: geo.lng }); }}
-                  variant="outline"
-                  className="pointer-events-auto h-10 rounded-2xl font-bold gap-1.5 bg-white/90 dark:bg-card/90 backdrop-blur-md shadow-lg"
-                >
-                  <LocateFixed className="w-4 h-4 text-primary" /> กลับไปที่รถ
-                </Button>
-              )}
-              <div className="pointer-events-auto bg-white/95 dark:bg-card/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-border/40 px-5 py-3 flex items-center gap-4">
-                <div className="bg-blue-600 p-2.5 rounded-2xl shrink-0">
-                  <Navigation className="w-5 h-5 text-white fill-white" />
-                </div>
-                {(() => {
-                  const target = driveTargets[nextStopIndex];
-                  const geom = (window as any).google?.maps?.geometry?.spherical;
-                  let meters: number | null = null;
-                  if (geo.ready && target && geom) {
-                    meters = geom.computeDistanceBetween(new google.maps.LatLng(geo.lat, geo.lng), target);
-                  }
-                  const distLabel = meters == null ? '— กม.'
-                    : meters >= 1000 ? `${(meters / 1000).toFixed(1)} กม.` : `${Math.round(meters)} ม.`;
-                  const spd = geo.speed ?? 0;
-                  const etaMin = meters != null && spd > 3 ? Math.round((meters / 1000) / spd * 60) : null;
-                  return (
-                    <>
-                      <div className="min-w-0">
-                        <p className="text-[10px] font-black text-muted-foreground uppercase tracking-wider">
-                          {nextStopIndex < plannedStops.length ? `จุดชาร์จถัดไป (ที่ ${nextStopIndex + 1})` : 'มุ่งหน้าปลายทาง'}
-                        </p>
-                        <p className="text-3xl font-black text-foreground tabular-nums leading-tight">{distLabel}</p>
-                        {etaMin != null && (
-                          <p className="text-[11px] font-bold text-blue-600">อีก ~{formatMinutes(etaMin)}</p>
-                        )}
-                      </div>
-                      <div className="pl-4 border-l border-border/50 text-center shrink-0">
-                        <p className="text-[9px] font-black text-muted-foreground uppercase flex items-center gap-1 justify-center">
-                          <GaugeIcon className="w-3 h-3" /> ความเร็ว
-                        </p>
-                        <p className="text-2xl font-black text-foreground tabular-nums leading-tight">{geo.speed ?? 0}</p>
-                        <p className="text-[9px] font-bold text-muted-foreground">กม./ชม.</p>
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {routeInfo && (
@@ -2639,7 +2315,7 @@ function MapView({
                     <div className="space-y-2.5">
                       <div className="flex items-center justify-between gap-2 px-1">
                         <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">
-                          เลือกปั๊มแต่ละจุด (โหมดนำทาง)
+                          เลือกปั๊มแต่ละจุด (ส่งเข้า Google Maps)
                         </p>
                         <button
                           onClick={() => setShowAllSides(v => !v)}
@@ -2767,16 +2443,6 @@ function MapView({
                     <p className="text-[11px] font-bold text-green-700/60">พลังงานเพียงพอจนถึงที่หมาย (EPA)</p>
                   </div>
                 </div>
-              )}
-
-              {plannedStops.length > 0 && !isDriving && (
-                <Button
-                  onClick={startDriving}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-2xl h-14 font-black shadow-lg flex items-center justify-center gap-3"
-                >
-                  <Navigation className="w-5 h-5 fill-white" />
-                  <span>เริ่มโหมดขับขี่</span>
-                </Button>
               )}
 
               <div className="flex gap-2">
