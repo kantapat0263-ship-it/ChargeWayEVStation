@@ -108,6 +108,18 @@ import { cn } from '@/lib/utils';
 // มาจากการ "จำกัดสิทธิ์ key" ใน Google Cloud (HTTP referrer + จำกัด API ที่ใช้) ไม่ใช่การซ่อน key
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
+// รับเฉพาะลิงก์ http/https ก่อนใส่ใน href — ข้อมูล website ของสถานีมาจากบุคคลที่สาม (Google Places)
+// กันกรณีค่าเป็น javascript:/data: ฯลฯ ซึ่งจะกลายเป็น XSS ตอนผู้ใช้กดปุ่ม "เว็บไซต์"
+function safeHttpUrl(raw?: string | null): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 if (typeof window !== "undefined" && !GOOGLE_MAPS_API_KEY) {
   // เตือนตอน dev ถ้าลืมตั้งค่า env — กันแผนที่ขึ้นว่างเปล่าแบบงง ๆ
   console.warn(
@@ -2030,7 +2042,7 @@ function MapView({
       url += `&waypoints=${encodeURIComponent(waypoints.join('|'))}`;
     }
 
-    window.open(url, '_blank');
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   // เปิดแอปของเครือข่ายปั๊มตรง ๆ ถ้าติดตั้งแล้ว (Android) ไม่งั้นไปหน้า Store
@@ -2060,7 +2072,7 @@ function MapView({
     }
 
     // iOS / เดสก์ท็อป: เปิดหน้า Store ของแอป (เปิดแอปตรง ๆ ข้ามเว็บไม่รองรับ)
-    if (net.appUrl) window.open(net.appUrl, '_blank');
+    if (net.appUrl) window.open(net.appUrl, '_blank', 'noopener,noreferrer');
   };
 
   // สร้างข้อความสรุปทริปสำหรับแชร์/คัดลอก
@@ -2222,8 +2234,8 @@ function MapView({
                       </Button>
                     </a>
                   )}
-                  {selectedStation.website && (
-                    <a href={selectedStation.website} target="_blank" rel="noopener noreferrer" className="flex-1">
+                  {safeHttpUrl(selectedStation.website) && (
+                    <a href={safeHttpUrl(selectedStation.website)} target="_blank" rel="noopener noreferrer" className="flex-1">
                       <Button size="sm" variant="outline" className="w-full h-8 text-[10px] font-bold rounded-xl gap-1">
                         <Globe className="w-3.5 h-3.5" /> เว็บไซต์
                       </Button>
