@@ -30,7 +30,7 @@ export default function PrivacyPage() {
     <main className="mx-auto max-w-2xl px-5 py-8 text-foreground">
       <Link href="/" className="text-[13px] font-bold text-primary">&larr; กลับหน้าแผนที่</Link>
       <h1 className="mt-3 text-2xl font-black">นโยบายความเป็นส่วนตัว</h1>
-      <p className="mt-1 text-[12px] text-muted-foreground">ปรับปรุงล่าสุด: 21 มิ.ย. 2026</p>
+      <p className="mt-1 text-[12px] text-muted-foreground">ปรับปรุงล่าสุด: 3 ก.ย. 2026</p>
 
       <section className="mt-6 space-y-4 text-[13px] leading-relaxed">
         <div>
@@ -38,8 +38,9 @@ export default function PrivacyPage() {
           <p>ChargeWay เก็บข้อมูลต่อไปนี้ไว้<b>บนเครื่องของคุณ (localStorage)</b> เท่านั้น:</p>
           <ul className="list-disc pl-5 mt-1 space-y-0.5">
             <li>ตำแหน่ง GPS — ใช้แสดงตำแหน่งบนแผนที่และค้นหาสถานีใกล้เคียง (ขอเฉพาะตอนใช้งาน)</li>
-            <li>ทริปที่บันทึก จุดเริ่มต้น/ปลายทาง และรายการโปรด (บ้าน/ที่ทำงาน)</li>
-            <li>การตั้งค่าธีม (สว่าง/มืด)</li>
+            <li>ทริปที่บันทึก จุดเริ่มต้น/ปลายทาง (รวมทริปล่าสุดที่คำนวณ เก็บไว้ 24 ชม.) และรายการโปรด (บ้าน/ที่ทำงาน)</li>
+            <li>การตั้งค่ารถ/พลังงาน/ราคา/เครือข่าย และธีม (สว่าง/มืด)</li>
+            <li>แคชผลค้นหาสถานีชาร์จตามพิกัดจุดแวะ (เก็บไว้ 24 ชม. เพื่อลดการเรียก Google)</li>
             <li>เสียงพูดค้นหา — ประมวลผลผ่านเบราว์เซอร์ ไม่ถูกบันทึกไว้</li>
           </ul>
         </div>
@@ -57,6 +58,7 @@ export default function PrivacyPage() {
           <ul className="list-disc pl-5 mt-1 space-y-0.5">
             <li><b>Google Maps</b> — แสดงแผนที่ ค้นหาสถานี และนำทาง (อยู่ภายใต้นโยบายของ Google)</li>
             <li><b>Open-Meteo</b> — อุณหภูมิเพื่อประมาณระยะวิ่ง (ส่งเฉพาะพิกัดคร่าว ๆ ไม่มีตัวตน)</li>
+            <li><b>Sentry</b> (เฉพาะเมื่อผู้ดูแลเปิดใช้) — รายงานข้อผิดพลาดของแอป ไม่ส่ง IP/ตัวตน และตัด API key/พิกัดออกจาก URL ก่อนส่ง</li>
           </ul>
         </div>
 

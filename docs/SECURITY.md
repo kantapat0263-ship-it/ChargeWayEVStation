@@ -1,6 +1,50 @@
 # รายงานความปลอดภัย & ความเป็นส่วนตัว — ChargeWay
 
-> ปรับปรุง: 21 มิ.ย. 2026 · ขอบเขต: เว็บแอป Next.js (client-side) ที่ deploy บน Vercel
+> ปรับปรุง: 3 ก.ย. 2026 (รอบตรวจซ้ำ — ดูข้อ 0) · ขอบเขต: เว็บแอป Next.js (client-side) ที่ deploy บน Vercel
+
+---
+
+## 0. รอบตรวจซ้ำ 3 ก.ย. 2026 — ผลและสิ่งที่แก้
+
+**สรุป:** โค้ดไม่มีช่องโหว่ระดับสูง (`npm audit` = 0, ไม่มี server/auth/DB, ไม่มี `innerHTML`/`eval` ที่รับข้อมูลผู้ใช้)
+แต่มี **1 เรื่องเร่งด่วนที่โค้ดแก้ให้ไม่ได้** และมีจุดปรับปรุงระดับกลาง/ต่ำที่แก้ไปแล้วในรอบนี้
+
+### 🔴 P0 — key เก่าที่หลุดใน git history **ยังใช้งานได้และไม่ถูกจำกัดสิทธิ์** (ต้องทำเองทันที)
+ทดสอบเรียก Geocoding API ด้วย key `AIzaSyBkAJ…` (จาก commit `5017a73`/`717eedc`) จากเครื่องนอกโดเมน
+โดย **ไม่มี HTTP referer** → Google ตอบผลลัพธ์ปกติ แปลว่า:
+- key ยังไม่ถูก rotate/ปิด และ **ไม่มี Application restriction** ใครก็ตามที่อ่าน history ของ repo ได้ (repo public)
+  เอาไปยิง Maps/Places/Directions เก็บเงินในบัญชีของคุณได้ทันที
+- ต้องทำใน [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials):
+  1. สร้าง key ใหม่ → ตั้ง **HTTP referrers** เฉพาะโดเมนจริง + **API restrictions** เฉพาะ Maps JS / Places / Geocoding / Directions
+  2. ตั้ง key ใหม่ใน Vercel env `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`
+  3. **ลบ key เก่าทิ้ง** (ไม่ใช่แค่จำกัดสิทธิ์ — มันอยู่ใน history ถาวรแล้ว)
+  4. ตั้ง **Budget alert** ใน Billing ไว้ด้วย
+  (ทางเลือกเสริม: ล้าง history ด้วย `git filter-repo` + force-push — แต่ถ้า rotate แล้ว key เก่าก็ไร้ค่าอยู่ดี)
+
+### 🟠 แก้แล้วในรอบนี้
+| # | ประเด็น | ระดับ | การแก้ |
+|---|---|---|---|
+| 1 | **สิทธิ์ลบ/ส่งออกข้อมูล (PDPA) ไม่ครบ** — `STORAGE_KEYS` ขาด `chargeway_prefs`, `chargeway_last_trip` (ต้นทาง/ปลายทางของผู้ใช้!) และแคช `chargeway_stations_*` กด "ลบข้อมูลทั้งหมด" แล้วข้อมูลตำแหน่งยังอยู่ | กลาง | `src/lib/privacy.ts` รวม key ที่ขาด + กวาดทุก key ที่ขึ้นต้น `chargeway_` เป็นตาข่ายสุดท้าย (รวม consent) · เพิ่ม unit test `privacy.test.ts` · อัปเดตหน้า `/privacy` ให้ตรงกับข้อมูลที่เก็บจริง |
+| 2 | **CSP บล็อก Sentry** — `connect-src` ไม่มีโดเมน ingest ของ Sentry → ตั้ง DSN แล้วรายงานถูกทิ้งเงียบ ๆ (monitoring ใช้ไม่ได้) | กลาง | `next.config.ts` อ่าน origin จาก `NEXT_PUBLIC_SENTRY_DSN` ตอน build แล้วเติมใน `connect-src` (ไม่ตั้ง DSN = ไม่เติม) |
+| 3 | **ลิงก์ "เว็บไซต์" ของสถานี** ใส่ `href` ตรงจากข้อมูล Google Places โดยไม่เช็ค scheme (ถ้าเป็น `javascript:` = XSS ตอนกด) | ต่ำ | เพิ่ม `safeHttpUrl()` รับเฉพาะ `http(s):` ก่อนแสดงปุ่ม |
+| 4 | `window.open(url, '_blank')` ไม่ระบุ `noopener` (เบราว์เซอร์เก่าปล่อย `window.opener`) | ต่ำ | ใส่ `'noopener,noreferrer'` ทุกจุด + header `Cross-Origin-Opener-Policy: same-origin` |
+| 5 | Sentry breadcrumb เก็บ URL เต็ม ซึ่ง Maps/Open-Meteo แนบ `key=` และพิกัดผู้ใช้ | ต่ำ (privacy) | `instrumentation-client.ts` ตัด query string ออกก่อนส่ง + `sendDefaultPii: false` ชัดเจน |
+| 6 | CSP ไม่มี `frame-src` (ตกไปใช้ `default-src 'self'`) | ต่ำ | ระบุ `frame-src 'none'` — แอปไม่ใช้ iframe |
+| 7 | Dependency ตามหลัง patch ล่าสุด | ต่ำ | `next` 15.5.23 → **15.5.25**, `@sentry/nextjs` 10.67 → **10.73**, `postcss` → **8.5.28** · `npm audit` = 0 · typecheck/test/build ผ่าน |
+
+### ✅ ตรวจแล้ว ไม่พบปัญหา
+- ไม่มี secret ใน working tree (`.env*` ถูก ignore, มีแค่ `.env.example`)
+- ไม่มี `dangerouslySetInnerHTML`/`innerHTML`/`eval` ที่รับข้อมูลภายนอก (มีเฉพาะใน `ui/chart.tsx` ที่ไม่ถูกใช้และรับแต่ config คงที่)
+- ทุก `JSON.parse` จาก localStorage มี try/catch + ตรวจ shape · ไม่มี server-side input, ไม่มี API route
+- Service Worker ไม่แคช request ข้ามโดเมน, ไม่แคช non-GET
+- Headers ทั้งหมดถูกเสิร์ฟจริง (ตรวจด้วย `next start` + `curl -I` ในรอบนี้)
+- CI: `permissions: contents: read`, `npm audit --audit-level=high`, Dependabot ครอบ npm + github-actions
+
+### 📋 แนะนำเพิ่ม (ยังไม่ทำ — เลือกตามความคุ้ม)
+- ตั้ง **Budget alert / quota cap** ให้ Google Maps ใน Cloud Billing (แม้ key ใหม่จะจำกัด referer แล้ว referer ก็ปลอมได้จากนอกเบราว์เซอร์)
+- Pin GitHub Actions เป็น commit SHA (`actions/checkout@<sha>`) แทน `@v4` — กัน supply-chain บน CI
+- ถ้าอยากตัด `'unsafe-inline'/'unsafe-eval'` ใน CSP ต้องย้ายเป็น nonce ผ่าน middleware (หน้าเว็บจะไม่ static อีกต่อไป) — Google Maps SDK รองรับ nonce แต่ต้องทดสอบให้ดี
+- เพิ่ม `public/.well-known/security.txt` ระบุช่องทางแจ้งช่องโหว่
 
 ---
 
