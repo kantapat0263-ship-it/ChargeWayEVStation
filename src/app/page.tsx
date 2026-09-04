@@ -493,6 +493,9 @@ function TripForm({
   // ช่องปลายทางเป็นไดนามิก — เก็บ input ตาม id และกันผูก Autocomplete ซ้ำด้วย WeakSet
   const destInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const acAttachedRef = useRef<WeakSet<HTMLInputElement>>(new WeakSet());
+  // พิกัดจริงของสถานที่ที่ผู้ใช้เลือกจากรายการแนะนำ (คีย์ = ข้อความในช่อง)
+  // ถ้าผู้ใช้พิมพ์เองโดยไม่เลือกจากรายการ จะไม่มีคีย์ในนี้ → ส่งเป็นข้อความให้ Google เดาเหมือนเดิม
+  const placeCoordsRef = useRef<Record<string, google.maps.LatLngLiteral>>({});
   const placesLib = useMapsLibrary('places');
   const geocodingLib = useMapsLibrary('geocoding');
   const { toast } = useToast();
@@ -500,6 +503,11 @@ function TripForm({
   // ===== จัดการปลายทางหลายช่อง =====
   const setDestValue = useCallback((id: string, value: string) => {
     setDestFields(prev => prev.map(f => (f.id === id ? { ...f, value } : f)));
+  }, []);
+  // จำพิกัดของผลลัพธ์ที่เลือก เพื่อส่งเป็น LatLng ตอนขอเส้นทาง (แม่นกว่าส่งข้อความ)
+  const rememberPlaceCoords = useCallback((label: string, place: google.maps.places.PlaceResult) => {
+    const loc = place.geometry?.location;
+    if (loc) placeCoordsRef.current[label.trim()] = { lat: loc.lat(), lng: loc.lng() };
   }, []);
   const addDestination = () => setDestFields(prev => [...prev, { id: newDestId(), value: '' }]);
   const removeDestination = (id: string) => {
@@ -591,8 +599,11 @@ function TripForm({
       attached.add(originInput);
       const originAutocomplete = new placesLib.Autocomplete(originInput, options);
       originAutocomplete.addListener("place_changed", () => {
-        const label = placeLabel(originAutocomplete.getPlace());
-        if (label) setOrigin(label);
+        const place = originAutocomplete.getPlace();
+        const label = placeLabel(place);
+        if (!label) return;
+        rememberPlaceCoords(label, place);
+        setOrigin(label);
       });
     }
 
@@ -602,11 +613,14 @@ function TripForm({
       attached.add(input);
       const ac = new placesLib.Autocomplete(input, options);
       ac.addListener("place_changed", () => {
-        const label = placeLabel(ac.getPlace());
-        if (label) setDestValue(f.id, label);
+        const place = ac.getPlace();
+        const label = placeLabel(place);
+        if (!label) return;
+        rememberPlaceCoords(label, place);
+        setDestValue(f.id, label);
       });
     });
-  }, [placesLib, destFields, setDestValue]);
+  }, [placesLib, destFields, setDestValue, rememberPlaceCoords]);
 
   const handleUseMyLocation = () => {
     if (!navigator.geolocation) {
@@ -672,6 +686,9 @@ function TripForm({
       origin,
       destination: finalDestination,
       destinations: filledDestinations,
+      // พิกัดของจุดที่เลือกจากรายการแนะนำ (null = ผู้ใช้พิมพ์เอง ให้ Google เดาจากข้อความ)
+      originCoords: placeCoordsRef.current[origin.trim()] ?? null,
+      destinationCoords: filledDestinations.map(d => placeCoordsRef.current[d] ?? null),
       fullRange,
       rangeStandard,
       epaRange: actualEpaRange,
@@ -1478,9 +1495,13 @@ function MapView({
         const pointKinds = points.map(p => (p.kind === 'station' ? 'station' : 'via') as 'station' | 'via');
 
         const directionsService = new google.maps.DirectionsService();
+        // ต้องใช้พิกัดชุดเดียวกับเฟสหนึ่ง ไม่งั้นเส้นทางรอบสองจะ ZERO_RESULTS ซ้ำ
+        const originPoint = tripData.originCoords ?? tripData.origin;
+        const destCoordList = tripData.destinationCoords ?? [];
+        const lastDestPoint = destCoordList[destCoordList.length - 1] ?? tripData.destination;
         const result = await directionsService.route({
-          origin: tripData.origin,
-          destination: roundTrip ? tripData.origin : tripData.destination,
+          origin: originPoint,
+          destination: roundTrip ? originPoint : lastDestPoint,
           waypoints: points.map(p => ({ location: p.location, stopover: true })),
           optimizeWaypoints: false,
           travelMode: google.maps.TravelMode.DRIVING,
@@ -1784,6 +1805,7 @@ function MapView({
         batteryKwh = 60, chargingKw = 60, targetCharge = 80,
         searchRadius = 20, pricingNetworkId = 'ptt', tariffMode = 'auto',
         startSoc = 100, tempMode = 'auto', manualTemp = 32, roundTrip = false,
+        originCoords = null, destinationCoords = [],
       } = tripData;
       setSearchRadiusKm(searchRadius);
       const directionsService = new google.maps.DirectionsService();
@@ -1792,10 +1814,14 @@ function MapView({
         // ปลายทางหลายจุด: วิ่งผ่านทุกจุดตามลำดับ จุดสุดท้ายคือปลายทางจริง
         // ไป-กลับ: ทุกปลายทางกลายเป็นจุดผ่าน แล้ววนกลับ origin
         const destList: string[] = (tripData.destinations?.length ? tripData.destinations : [destination]).filter(Boolean);
-        const midDestinations = roundTrip ? destList : destList.slice(0, -1);
+        // ใช้พิกัดจริงเมื่อผู้ใช้เลือกจากรายการแนะนำ — ชื่อจังหวัดเปล่า ๆ (เช่น "ลำปาง") จะถูกแปลงเป็น
+        // จุดกึ่งกลางจังหวัดที่ Google หาถนนไม่เจอ แล้วตอบ ZERO_RESULTS ทำให้กดคำนวณแล้วเหมือนไม่มีอะไรเกิดขึ้น
+        const originPoint = originCoords ?? origin;
+        const destPoints = destList.map((d, i) => destinationCoords[i] ?? d);
+        const midDestinations = roundTrip ? destPoints : destPoints.slice(0, -1);
         const result = await directionsService.route({
-          origin,
-          destination: roundTrip ? origin : destList[destList.length - 1],
+          origin: originPoint,
+          destination: roundTrip ? originPoint : destPoints[destPoints.length - 1],
           waypoints: midDestinations.length > 0
             ? midDestinations.map(d => ({ location: d, stopover: true }))
             : undefined,
@@ -2004,7 +2030,7 @@ function MapView({
         toast({
           variant: 'destructive',
           title: 'คำนวณเส้นทางไม่สำเร็จ',
-          description: 'ไม่พบเส้นทางจากจุดเริ่มต้นไปปลายทาง — ตรวจสอบชื่อสถานที่หรือการเชื่อมต่อ แล้วลองใหม่อีกครั้ง',
+          description: 'ไม่พบเส้นทางจากจุดเริ่มต้นไปปลายทาง — ลองเลือกสถานที่จากรายการที่ขึ้นใต้ช่องกรอก แทนการพิมพ์ชื่อจังหวัดเปล่า ๆ แล้วกดใหม่อีกครั้ง',
         });
       } finally {
         if (seq === planSeqRef.current) {

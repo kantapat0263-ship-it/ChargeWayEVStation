@@ -30,17 +30,19 @@ npm run typecheck  # เช็ค TypeScript
 npm run build      # build production (typecheck เปิดอยู่ — error = build ไม่ผ่าน)
 ```
 
-> 🚨 **ต้องทำทันที: rotate API key**
-> key เดิมเคยถูกฝังในโค้ดและยังอยู่ใน **ประวัติ git** — ถือว่าหลุดแล้ว
-> เข้า [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials)
-> **สร้าง key ใหม่ + ลบ/ปิด key เก่า** แล้วตั้งค่า key ใหม่เป็น env variable เท่านั้น (โค้ดไม่มี fallback แล้ว)
+> 🚨 **key เดิมหลุดแล้ว — อย่านำกลับมาใช้**
+> key ที่เคยถูกฝังในโค้ดยังอยู่ใน **ประวัติ git** ตลอดไป ถือว่าหลุดถาวร
+> key ที่ใช้อยู่ตอนนี้เป็นตัวใหม่ที่จำกัดสิทธิ์แล้ว และตั้งผ่าน env variable เท่านั้น (โค้ดไม่มี fallback)
+> ถ้าคุณ fork repo นี้ ให้[สร้าง key ของคุณเอง](https://console.cloud.google.com/apis/credentials) แล้วจำกัดสิทธิ์ตามด้านล่าง
 >
 > ⚠️ **เรื่องความปลอดภัยของ API key**
 > key ของ Google Maps JS API เป็น **client-side** — ผู้ใช้มองเห็นได้ในเบราว์เซอร์เสมอ
 > ซ่อนไม่ได้ การป้องกันที่แท้จริงคือ **จำกัดสิทธิ์ key** ใน Google Cloud Console:
 > 1. **Application restrictions → HTTP referrers**: ใส่เฉพาะโดเมนของคุณ
->    เช่น `https://your-app.vercel.app/*` และ `http://localhost:3000/*`
-> 2. **API restrictions**: เปิดเฉพาะ Maps JavaScript API, Places API, Geocoding API, Directions API
+>    เช่น `https://charge-way-ev-station.vercel.app/*` และ `http://localhost:9002/*`
+>    (`npm run dev` รันที่พอร์ต **9002** ไม่ใช่ 3000 — ใส่ผิดพอร์ตแล้วแผนที่จะไม่ขึ้นตอน dev)
+>    หมายเหตุ: Google ไม่รับ `*` กลางชื่อโดเมน จึงครอบ preview URL ของ Vercel ที่สุ่มรหัสไม่ได้
+> 2. **API restrictions**: เปิดเฉพาะ Maps JavaScript API, Places API (New), Places API, Geocoding API, Directions API
 
 ## Deploy ขึ้น Vercel
 
